@@ -7,7 +7,7 @@
 pip install web3 eth_account
 pip install --upgrade web3
 ```
-
+创建脚本
 ```bash
 nano t3rn.py
 ```
