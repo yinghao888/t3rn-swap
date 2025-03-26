@@ -8,18 +8,19 @@ pip install web3 eth_account
 pip install --upgrade web3
 ```
 
-
+```bash
+nano t3rn.py
+```
 参数配置：只能修改私匙和互跨次数，跨链金额不能更改。需要更改的请修改代码中对应的input data
 
-PRIVATE_KEY = "0x1234567890" #填写私匙
-
-AMOUNT_ETH = 1 # 每次跨链金额（单位：ETH）
+PRIVATE_KEY = "0x1234567890" #填写私钥
 
 TIMES = 1000 # 互跨来回次数
 
-1 op_uni.py OP<->UNI 互SWAP刷奖励
+
+op_uni.py OP<->UNI 互SWAP刷奖励
 
 ```bash
-python3 op_uni_03.py
+python3 t3rn.py
 ```
 
