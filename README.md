@@ -3,6 +3,7 @@
 当前支持op和uni互刷。刷之前检查链上是否有对应的测试eth。
 
 安装支持
+```bash
 pip install web3 eth_account
 
 pip install --upgrade web3
@@ -17,4 +18,5 @@ TIMES = 1000 # 互跨来回次数
 
 1 op_uni.py OP<->UNI 互SWAP刷奖励
 
+```bash
 python3 op_uni_03.py
