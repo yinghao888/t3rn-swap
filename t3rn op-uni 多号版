@@ -1,0 +1,142 @@
+from web3 import Web3
+import time
+from typing import List, Dict
+
+# === 可自定义参数 ===
+ACCOUNTS = [
+    {"private_key": "", "name": "Account1"},
+    {"private_key": "", "name": "Account2"},
+    {"private_key": "", "name": "Account3"},
+    {"private_key": "", "name": "Account4"},
+    {"private_key": "", "name": "Account5"},
+    {"private_key": "", "name": "Account6"},
+    {"private_key": "", "name": "Account7"},
+    {"private_key": "", "name": "Account8"},
+    {"private_key": "", "name": "Account9"},
+    {"private_key": "", "name": "Account10"},
+    {"private_key": "", "name": "Account11"},
+    {"private_key": "", "name": "Account12"},
+    {"private_key": "", "name": "Account13"},
+    {"private_key": "", "name": "Account14"},
+]
+AMOUNT_ETH = 1  # 每次跨链金额（单位：ETH）
+TIMES = 200  # 每个账户互跨来回次数
+DELAY_BETWEEN_ACCOUNTS = 5  # 每个账户之间的延迟（秒）
+
+# RPC 地址
+OP_RPC_URL = "https://sepolia.optimism.io"
+ARB_RPC_URL = "https://unichain-sepolia.drpc.org"
+
+# 合约地址
+OP_CONTRACT_ADDRESS = "0xb6Def636914Ae60173d9007E732684a9eEDEF26E"
+ARB_CONTRACT_ADDRESS = "0x1cEAb5967E5f078Fa0FEC3DFfD0394Af1fEeBCC9"
+
+# 数据模板
+OP_DATA_TEMPLATE = "0x56591d59756e6974000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000{address}0000000000000000000000000000000000000000000000000de0a4e796a5670c000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000de0b6b3a7640000"
+UNI_DATA_TEMPLATE = "0x56591d596f707374000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000{address}0000000000000000000000000000000000000000000000000de0a4eff22975f6000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000de0b6b3a7640000"
+
+# 初始化 Web3 实例
+w3_op = Web3(Web3.HTTPProvider(OP_RPC_URL))
+w3_arb = Web3(Web3.HTTPProvider(ARB_RPC_URL))
+
+if not w3_op.is_connected():
+    raise Exception("无法连接到 OP 测试网")
+if not w3_arb.is_connected():
+    raise Exception("无法连接到 UNI 测试网")
+
+# 账户初始化
+accounts: List[Dict] = []
+for acc in ACCOUNTS:
+    account = w3_op.eth.account.from_key(acc["private_key"])
+    address = account.address[2:]  # 去掉 "0x"
+    accounts.append({
+        "name": acc["name"],
+        "private_key": acc["private_key"],
+        "address": account.address,
+        "address_no_prefix": address,
+        "op_data": OP_DATA_TEMPLATE.format(address=address).replace("6f707374", "61726274"),
+        "uni_data": UNI_DATA_TEMPLATE.format(address=address)
+    })
+
+# 从 OP 跨到 UNI
+def bridge_op_to_arb(account_info: Dict, amount_eth: float) -> bool:
+    try:
+        amount_wei = w3_op.to_wei(amount_eth, 'ether')
+        nonce = w3_op.eth.get_transaction_count(account_info["address"])
+        tx = {
+            'from': account_info["address"],
+            'to': OP_CONTRACT_ADDRESS,
+            'value': amount_wei,
+            'nonce': nonce,
+            'gas': 250000,
+            'gasPrice': w3_op.to_wei(0.1, 'gwei'),
+            'chainId': 11155420,
+            'data': account_info["op_data"]
+        }
+        print(f"{account_info['name']} OP -> UNI: Sending {amount_eth} ETH")
+        signed_tx = w3_op.eth.account.sign_transaction(tx, account_info["private_key"])
+        raw_tx = signed_tx.raw_transaction if hasattr(signed_tx, 'raw_transaction') else signed_tx['raw']
+        tx_hash = w3_op.eth.send_raw_transaction(raw_tx)
+        print(f"{account_info['name']} OP -> UNI 交易哈希: {w3_op.to_hex(tx_hash)}")
+        tx_receipt = w3_op.eth.wait_for_transaction_receipt(tx_hash)
+        print(f"{account_info['name']} 交易确认，区块号: {tx_receipt.blockNumber}")
+        return True
+    except Exception as e:
+        print(f"{account_info['name']} OP -> UNI 失败: {e}")
+        return False
+
+# 从 UNI 跨回 OP
+def bridge_arb_to_op(account_info: Dict, amount_eth: float) -> bool:
+    try:
+        amount_wei = w3_arb.to_wei(amount_eth, 'ether')
+        nonce = w3_arb.eth.get_transaction_count(account_info["address"])
+        tx = {
+            'from': account_info["address"],
+            'to': ARB_CONTRACT_ADDRESS,
+            'value': amount_wei,
+            'nonce': nonce,
+            'gas': 400000,
+            'gasPrice': w3_arb.to_wei(0.1, 'gwei'),
+            'chainId': 1301,
+            'data': account_info["uni_data"]
+        }
+        print(f"{account_info['name']} UNI -> OP: Sending {amount_eth} ETH")
+        signed_tx = w3_arb.eth.account.sign_transaction(tx, account_info["private_key"])
+        raw_tx = signed_tx.raw_transaction if hasattr(signed_tx, 'raw_transaction') else signed_tx['raw']
+        tx_hash = w3_arb.eth.send_raw_transaction(raw_tx)
+        print(f"{account_info['name']} UNI -> OP 交易哈希: {w3_arb.to_hex(tx_hash)}")
+        tx_receipt = w3_arb.eth.wait_for_transaction_receipt(tx_hash)
+        print(f"{account_info['name']} 交易确认，区块号: {tx_receipt.blockNumber}")
+        return True
+    except Exception as e:
+        print(f"{account_info['name']} UNI -> OP 失败: {e}")
+        return False
+
+# 主执行逻辑
+def run_bridge():
+    print(f"开始为 {len(accounts)} 个账户执行 {TIMES} 次 OP-UNI 互跨，每次 {AMOUNT_ETH} ETH")
+    
+    for i in range(TIMES):
+        print(f"\n=== 第 {i+1} 轮跨链 ===")
+        
+        for account_info in accounts:
+            print(f"\n处理账户: {account_info['name']}")
+            
+            # OP -> UNI
+            success = bridge_op_to_arb(account_info, AMOUNT_ETH)
+            if not success:
+                print(f"{account_info['name']} OP -> UNI 失败，跳过此轮")
+                continue
+                
+            # UNI -> OP
+            success = bridge_arb_to_op(account_info, AMOUNT_ETH)
+            if not success:
+                print(f"{account_info['name']} UNI -> OP 失败，继续下一账户")
+                
+            # 账户间延迟
+            time.sleep(DELAY_BETWEEN_ACCOUNTS)
+            
+    print("\n所有跨链操作已完成！")
+
+if __name__ == "__main__":
+    run_bridge()
