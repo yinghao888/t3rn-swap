@@ -6,6 +6,8 @@
 ```bash
 pip install web3 eth_account
 pip install --upgrade web3
+```
+
 
 参数配置：只能修改私匙和互跨次数，跨链金额不能更改。需要更改的请修改代码中对应的input data
 
@@ -19,3 +21,5 @@ TIMES = 1000 # 互跨来回次数
 
 ```bash
 python3 op_uni_03.py
+```
+
