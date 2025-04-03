@@ -1,18 +1,25 @@
 from web3 import Web3
 import time
-import threading
 import requests
 from typing import List, Dict
-from math import ceil
+import threading
 
 # === 可自定义参数 ===
 ACCOUNTS = [
     {"private_key": "", "name": "Account1"},
+    {"private_key": "", "name": "Account2"},
+    {"private_key": "", "name": "Account3"},
+    {"private_key": "", "name": "Account4"},
+    {"private_key": "", "name": "Account5"},
+    {"private_key": "", "name": "Account6"},
+    {"private_key": "", "name": "Account7"},
+    {"private_key": "", "name": "Account8"},
+    {"private_key": "", "name": "Account9"},
+    {"private_key": "", "name": "Account10"},
 ]
 AMOUNT_ETH = 3  # 每次跨链金额（单位：ETH）
 TIMES = 20000000  # 每个账户互跨来回次数
 DELAY_BETWEEN_ACCOUNTS = 0.1  # 每个账户之间的延迟（秒）
-NUM_THREADS = 1  # 线程数量
 
 # Telegram 参数
 TELEGRAM_TOKEN = ""
@@ -31,9 +38,18 @@ ARB_CONTRACT_ADDRESS = "0x1cEAb5967E5f078Fa0FEC3DFfD0394Af1fEeBCC9"
 OP_DATA_TEMPLATE = "0x56591d59756e6974000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000{address}00000000000000000000000000000000000000000000000029a207ee8a25c6ec0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000029a2241af62c0000"
 UNI_DATA_TEMPLATE = "0x56591d596f707374000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000{address}00000000000000000000000000000000000000000000000029a2181141ac107c0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000029a2241af62c0000"
 
-# 全局计数器和锁
+# ANSI 颜色代码
+GREEN = "\033[92m"
+YELLOW = "\033[93m"
+RED = "\033[91m"
+BLUE = "\033[94m"
+RESET = "\033[0m"
+
+# 全局计数器
 success_count = 0
-count_lock = threading.Lock()
+total_success_count = 0
+minute_success_count = 0
+last_minute_time = time.time()
 
 # 账户初始化
 accounts: List[Dict] = []
@@ -59,25 +75,36 @@ def send_telegram_message(message: str):
         }
         response = requests.post(url, data=data)
         if response.json().get("ok"):
-            print(f"Telegram 消息发送成功: {message}")
+            print(f"📩 Telegram 消息发送成功: {message}")
         else:
-            print(f"Telegram 消息发送失败: {response.json()}")
+            print(f"❌ Telegram 消息发送失败: {response.json()}")
     except Exception as e:
-        print(f"Telegram 消息发送失败: {e}")
+        print(f"❌ Telegram 消息发送失败: {e}")
 
-# 定时报告线程
+# 定时报告和分钟统计函数
 def report_worker():
-    global success_count
+    global success_count, total_success_count, minute_success_count, last_minute_time
     while True:
-        time.sleep(TELEGRAM_REPORT_INTERVAL)
-        with count_lock:
-            message = f"过去 10 分钟完成跨链次数: {success_count}"
+        current_time = time.time()
+        # 每分钟统计
+        if current_time - last_minute_time >= 60:
+            print(f"\n{YELLOW}=================================================={RESET}")
+            print(f"{GREEN}📊📊📊 分钟交易统计 📊📊📊{RESET}")
+            print(f"{BLUE}上一分钟完成: {minute_success_count} 笔交易 🚀{RESET}")
+            print(f"{BLUE}累计完成总数: {total_success_count} 笔交易 🌟{RESET}")
+            print(f"{YELLOW}=================================================={RESET}\n")
+            minute_success_count = 0
+            last_minute_time = current_time
+        # 每10分钟报告
+        if current_time - last_minute_time >= TELEGRAM_REPORT_INTERVAL:
+            message = f"过去 10 分钟完成跨链次数: {success_count} 🚀\n总计完成: {total_success_count} 🎉"
             send_telegram_message(message)
-            success_count = 0  # 重置计数器
+            success_count = 0
+        time.sleep(1)
 
 # 从 OP 跨到 UNI
-def bridge_op_to_arb(account_info: Dict, amount_eth: float, w3_op: Web3, thread_name: str) -> bool:
-    global success_count
+def bridge_op_to_arb(account_info: Dict, amount_eth: float, w3_op: Web3) -> bool:
+    global success_count, total_success_count, minute_success_count
     try:
         amount_wei = w3_op.to_wei(amount_eth, 'ether')
         balance_op = w3_op.eth.get_balance(account_info["address"])
@@ -85,11 +112,11 @@ def bridge_op_to_arb(account_info: Dict, amount_eth: float, w3_op: Web3, thread_
         gas_limit = 250000
         estimated_gas_cost = gas_price * gas_limit
         total_cost = amount_wei + estimated_gas_cost
-        print(f"[{thread_name}] {account_info['name']} OP balance: {w3_op.from_wei(balance_op, 'ether')} ETH")
-        print(f"[{thread_name}] Estimated gas cost: {w3_op.from_wei(estimated_gas_cost, 'ether')} ETH")
-        print(f"[{thread_name}] Total cost (value + gas): {w3_op.from_wei(total_cost, 'ether')} ETH")
+        print(f"💰 {account_info['name']} OP 余额: {w3_op.from_wei(balance_op, 'ether')} ETH")
+        print(f"⛽ 预估 Gas 费用: {w3_op.from_wei(estimated_gas_cost, 'ether')} ETH")
+        print(f"💸 总费用 (金额 + Gas): {w3_op.from_wei(total_cost, 'ether')} ETH")
         if balance_op < total_cost:
-            print(f"[{thread_name}] {account_info['name']} OP 余额不足，需 {w3_op.from_wei(total_cost, 'ether')} ETH，实际余额 {w3_op.from_wei(balance_op, 'ether')} ETH")
+            print(f"⚠️ {account_info['name']} OP 余额不足，需要 {w3_op.from_wei(total_cost, 'ether')} ETH，实际余额 {w3_op.from_wei(balance_op, 'ether')} ETH 😢")
             return False
         nonce = w3_op.eth.get_transaction_count(account_info["address"])
         tx = {
@@ -102,23 +129,24 @@ def bridge_op_to_arb(account_info: Dict, amount_eth: float, w3_op: Web3, thread_
             'chainId': 11155420,
             'data': account_info["op_data"]
         }
-        print(f"[{thread_name}] {account_info['name']} OP -> UNI: Sending {amount_eth} ETH")
+        print(f"🚀 {account_info['name']} OP -> UNI: 发送 {amount_eth} ETH")
         signed_tx = w3_op.eth.account.sign_transaction(tx, account_info["private_key"])
         raw_tx = signed_tx.raw_transaction if hasattr(signed_tx, 'raw_transaction') else signed_tx['raw']
         tx_hash = w3_op.eth.send_raw_transaction(raw_tx)
-        print(f"[{thread_name}] {account_info['name']} OP -> UNI 交易哈希: {w3_op.to_hex(tx_hash)}")
+        print(f"📜 {account_info['name']} OP -> UNI 交易哈希: {w3_op.to_hex(tx_hash)}")
         tx_receipt = w3_op.eth.wait_for_transaction_receipt(tx_hash)
-        print(f"[{thread_name}] {account_info['name']} 交易确认，区块号: {tx_receipt.blockNumber}")
-        with count_lock:
-            success_count += 1
+        print(f"✅ {account_info['name']} 交易确认，区块号: {tx_receipt.blockNumber} 🎉")
+        success_count += 1
+        total_success_count += 1
+        minute_success_count += 1
         return True
     except Exception as e:
-        print(f"[{thread_name}] {account_info['name']} OP -> UNI 失败: {e}")
+        print(f"❌ {account_info['name']} OP -> UNI 失败: {e} 😭")
         return False
 
 # 从 UNI 跨回 OP
-def bridge_arb_to_op(account_info: Dict, amount_eth: float, w3_arb: Web3, thread_name: str) -> bool:
-    global success_count
+def bridge_arb_to_op(account_info: Dict, amount_eth: float, w3_arb: Web3) -> bool:
+    global success_count, total_success_count, minute_success_count
     try:
         amount_wei = w3_arb.to_wei(amount_eth, 'ether')
         balance_arb = w3_arb.eth.get_balance(account_info["address"])
@@ -126,11 +154,11 @@ def bridge_arb_to_op(account_info: Dict, amount_eth: float, w3_arb: Web3, thread
         gas_limit = 400000
         estimated_gas_cost = gas_price * gas_limit
         total_cost = amount_wei + estimated_gas_cost
-        print(f"[{thread_name}] {account_info['name']} ARB balance: {w3_arb.from_wei(balance_arb, 'ether')} ETH")
-        print(f"[{thread_name}] Estimated gas cost: {w3_arb.from_wei(estimated_gas_cost, 'ether')} ETH")
-        print(f"[{thread_name}] Total cost (value + gas): {w3_arb.from_wei(total_cost, 'ether')} ETH")
+        print(f"💰 {account_info['name']} ARB 余额: {w3_arb.from_wei(balance_arb, 'ether')} ETH")
+        print(f"⛽ 预估 Gas 费用: {w3_arb.from_wei(estimated_gas_cost, 'ether')} ETH")
+        print(f"💸 总费用 (金额 + Gas): {w3_arb.from_wei(total_cost, 'ether')} ETH")
         if balance_arb < total_cost:
-            print(f"[{thread_name}] {account_info['name']} ARB 余额不足，需 {w3_arb.from_wei(total_cost, 'ether')} ETH，实际余额 {w3_arb.from_wei(balance_arb, 'ether')} ETH")
+            print(f"⚠️ {account_info['name']} ARB 余额不足，需要 {w3_arb.from_wei(total_cost, 'ether')} ETH，实际余额 {w3_arb.from_wei(balance_arb, 'ether')} ETH 😢")
             return False
         nonce = w3_arb.eth.get_transaction_count(account_info["address"])
         tx = {
@@ -143,89 +171,69 @@ def bridge_arb_to_op(account_info: Dict, amount_eth: float, w3_arb: Web3, thread
             'chainId': 1301,
             'data': account_info["uni_data"]
         }
-        print(f"[{thread_name}] {account_info['name']} UNI -> OP: Sending {amount_eth} ETH")
+        print(f"🚀 {account_info['name']} UNI -> OP: 发送 {amount_eth} ETH")
         signed_tx = w3_arb.eth.account.sign_transaction(tx, account_info["private_key"])
         raw_tx = signed_tx.raw_transaction if hasattr(signed_tx, 'raw_transaction') else signed_tx['raw']
         tx_hash = w3_arb.eth.send_raw_transaction(raw_tx)
-        print(f"[{thread_name}] {account_info['name']} UNI -> OP 交易哈希: {w3_arb.to_hex(tx_hash)}")
+        print(f"📜 {account_info['name']} UNI -> OP 交易哈希: {w3_arb.to_hex(tx_hash)}")
         tx_receipt = w3_arb.eth.wait_for_transaction_receipt(tx_hash)
-        print(f"[{thread_name}] {account_info['name']} 交易确认，区块号: {tx_receipt.blockNumber}")
-        with count_lock:
-            success_count += 1
+        print(f"✅ {account_info['name']} 交易确认，区块号: {tx_receipt.blockNumber} 🎉")
+        success_count += 1
+        total_success_count += 1
+        minute_success_count += 1
         return True
     except Exception as e:
-        print(f"[{thread_name}] {account_info['name']} UNI -> OP 失败: {e}")
+        print(f"❌ {account_info['name']} UNI -> OP 失败: {e} 😭")
         return False
 
-# 线程任务
-def worker(thread_id: int, accounts_subset: List[Dict]):
-    thread_name = f"Thread-{thread_id}"
-    print(f"[{thread_name}] 启动，处理 {len(accounts_subset)} 个账户")
+# 主执行逻辑
+def run_bridge():
+    print(f"🌈 开始为 {len(accounts)} 个账户执行 {TIMES} 次 OP-UNI 互跨，每次 {AMOUNT_ETH} ETH 🎉")
     
-    # 为每个线程创建独立的 Web3 实例
+    # 创建 Web3 实例
     w3_op = Web3(Web3.HTTPProvider(OP_RPC_URL, request_kwargs={'timeout': 30}))
     w3_arb = Web3(Web3.HTTPProvider(ARB_RPC_URL, request_kwargs={'timeout': 30}))
     
     if not w3_op.is_connected():
-        print(f"[{thread_name}] 无法连接到 OP 测试网")
+        print(f"{RED}❌ 无法连接到 OP 测试网 😢{RESET}")
         return
     if not w3_arb.is_connected():
-        print(f"[{thread_name}] 无法连接到 UNI 测试网")
+        print(f"{RED}❌ 无法连接到 UNI 测试网 😢{RESET}")
         return
+    print(f"{GREEN}✅ 成功连接到 OP 和 UNI 测试网 🌟{RESET}")
+
+    # 启动报告线程
+    report_thread = threading.Thread(target=report_worker, daemon=True)
+    report_thread.start()
 
     for i in range(TIMES):
-        print(f"\n[{thread_name}] === 第 {i+1} 轮跨链 ===")
+        print(f"\n{YELLOW}✨ === 第 {i+1} 轮跨链开始 === ✨{RESET}")
         
-        for account_info in accounts_subset:
-            print(f"[{thread_name}] 处理账户: {account_info['name']}")
+        for account_info in accounts:
+            print(f"{BLUE}👤 处理账户: {account_info['name']} 🌟{RESET}")
             
             # OP -> UNI
-            op_success = bridge_op_to_arb(account_info, AMOUNT_ETH, w3_op, thread_name)
+            op_success = bridge_op_to_arb(account_info, AMOUNT_ETH, w3_op)
             if not op_success:
-                print(f"[{thread_name}] {account_info['name']} OP -> UNI 失败，但将继续尝试 UNI -> OP")
+                print(f"⚠️ {account_info['name']} OP -> UNI 失败，但将继续尝试 UNI -> OP 😅")
             
             # 无论 OP 是否成功，都尝试 UNI -> OP
-            uni_success = bridge_arb_to_op(account_info, AMOUNT_ETH, w3_arb, thread_name)
+            uni_success = bridge_arb_to_op(account_info, AMOUNT_ETH, w3_arb)
             if not uni_success:
-                print(f"[{thread_name}] {account_info['name']} UNI -> OP 失败，继续下一账户")
+                print(f"⚠️ {account_info['name']} UNI -> OP 失败，继续下一账户 😅")
             
             # 账户间延迟
             time.sleep(DELAY_BETWEEN_ACCOUNTS)
     
-    print(f"[{thread_name}] 所有跨链操作已完成！")
-
-# 主执行逻辑
-def run_bridge():
-    print(f"开始为 {len(accounts)} 个账户执行 {TIMES} 次 OP-UNI 互跨，每次 {AMOUNT_ETH} ETH，使用 {NUM_THREADS} 个线程")
-    
-    # 启动报告线程
-    report_thread = threading.Thread(target=report_worker, daemon=True)
-    report_thread.start()
-    
-    # 将账户列表分成 NUM_THREADS 份
-    accounts_per_thread = ceil(len(accounts) / NUM_THREADS)
-    threads = []
-    
-    for i in range(NUM_THREADS):
-        start_idx = i * accounts_per_thread
-        end_idx = min((i + 1) * accounts_per_thread, len(accounts))
-        accounts_subset = accounts[start_idx:end_idx]
-        if accounts_subset:  # 确保子列表不为空
-            thread = threading.Thread(target=worker, args=(i + 1, accounts_subset))
-            threads.append(thread)
-            thread.start()
-    
-    # 等待所有线程完成
-    for thread in threads:
-        thread.join()
+    print(f"{GREEN}🎉 所有跨链操作已完成！✨{RESET}")
 
 if __name__ == "__main__":
     while True:
         try:
             run_bridge()
-            print("完成一轮跨链，等待 60 秒后重新开始...")
+            print(f"{YELLOW}🌟 完成一轮跨链，等待 60 秒后重新开始... ⏳{RESET}")
             time.sleep(60)
         except Exception as e:
-            print(f"程序发生错误: {e}")
-            print("等待 60 秒后重试...")
+            print(f"{RED}❌ 程序发生错误: {e} 😱{RESET}")
+            print(f"{YELLOW}⏳ 等待 60 秒后重试...{RESET}")
             time.sleep(60)
