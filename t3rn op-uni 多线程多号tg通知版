@@ -11,19 +11,14 @@ ACCOUNTS = [
     {"private_key": "", "name": "Account3"},
     {"private_key": "", "name": "Account4"},
     {"private_key": "", "name": "Account5"},
-    {"private_key": "", "name": "Account6"},
-    {"private_key": "", "name": "Account7"},
-    {"private_key": "", "name": "Account8"},
-    {"private_key": "", "name": "Account9"},
-    {"private_key": "", "name": "Account10"},
 ]
 AMOUNT_ETH = 3  # 每次跨链金额（单位：ETH）
 TIMES = 20000000  # 每个账户互跨来回次数
-DELAY_BETWEEN_ACCOUNTS = 0.1  # 每个账户之间的延迟（秒）
+DELAY_BETWEEN_ACCOUNTS = 0.01  # 每个账户之间的延迟（秒）
 
 # Telegram 参数
-TELEGRAM_TOKEN = ""
-TELEGRAM_CHAT_ID = ""
+TELEGRAM_TOKEN = "6993725114:AAHiPLxxYSt-TGiylqxscjkDC7ba2iJsilE"
+TELEGRAM_CHAT_ID = "6573297379"
 TELEGRAM_REPORT_INTERVAL = 600  # 每 10 分钟（600 秒）发送一次报告
 
 # RPC 地址
@@ -50,6 +45,7 @@ success_count = 0
 total_success_count = 0
 minute_success_count = 0
 last_minute_time = time.time()
+start_time = time.time()  # 程序开始时间
 
 # 账户初始化
 accounts: List[Dict] = []
@@ -81,23 +77,33 @@ def send_telegram_message(message: str):
     except Exception as e:
         print(f"❌ Telegram 消息发送失败: {e}")
 
+# 将秒数转换为可读的时间格式
+def format_time(seconds: float) -> str:
+    hours = int(seconds // 3600)
+    minutes = int((seconds % 3600) // 60)
+    secs = int(seconds % 60)
+    return f"{hours}小时 {minutes}分钟 {secs}秒"
+
 # 定时报告和分钟统计函数
 def report_worker():
-    global success_count, total_success_count, minute_success_count, last_minute_time
+    global success_count, total_success_count, minute_success_count, last_minute_time, start_time
     while True:
         current_time = time.time()
         # 每分钟统计
         if current_time - last_minute_time >= 60:
+            runtime = current_time - start_time
             print(f"\n{YELLOW}=================================================={RESET}")
             print(f"{GREEN}📊📊📊 分钟交易统计 📊📊📊{RESET}")
             print(f"{BLUE}上一分钟完成: {minute_success_count} 笔交易 🚀{RESET}")
             print(f"{BLUE}累计完成总数: {total_success_count} 笔交易 🌟{RESET}")
+            print(f"{BLUE}累计运行时间: {format_time(runtime)} ⏰{RESET}")
             print(f"{YELLOW}=================================================={RESET}\n")
             minute_success_count = 0
             last_minute_time = current_time
         # 每10分钟报告
         if current_time - last_minute_time >= TELEGRAM_REPORT_INTERVAL:
-            message = f"过去 10 分钟完成跨链次数: {success_count} 🚀\n总计完成: {total_success_count} 🎉"
+            runtime = current_time - start_time
+            message = f"过去 10 分钟完成跨链次数: {success_count} 🚀\n总计完成: {total_success_count} 🎉\n运行时间: {format_time(runtime)} ⏰"
             send_telegram_message(message)
             success_count = 0
         time.sleep(1)
@@ -188,6 +194,8 @@ def bridge_arb_to_op(account_info: Dict, amount_eth: float, w3_arb: Web3) -> boo
 
 # 主执行逻辑
 def run_bridge():
+    global start_time
+    start_time = time.time()  # 重置开始时间
     print(f"🌈 开始为 {len(accounts)} 个账户执行 {TIMES} 次 OP-UNI 互跨，每次 {AMOUNT_ETH} ETH 🎉")
     
     # 创建 Web3 实例
