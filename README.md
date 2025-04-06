@@ -24,4 +24,5 @@ op_uni.py OP<->UNI 互SWAP刷奖励
 python3 t3rn.py
 ```
 
-![image](https://github.com/user-attachments/assets/f6d2c6e0-d213-48c0-8514-83c7cc217d9a)
+![image](https://github.com/user-attachments/assets/c86e0d08-5cc0-458e-b30a-10fd0402c792)
+
