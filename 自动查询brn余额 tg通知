@@ -1,0 +1,99 @@
+import asyncio
+import time
+from web3 import Web3
+from telegram import Bot
+from telegram.ext import Application
+
+# 配置
+TELEGRAM_TOKEN = ""
+CHAT_ID = ""  # 请确保这是正确的 Chat ID
+RPC_URL = "https://b2n.rpc.caldera.xyz/http"
+CHAIN_ID = 334
+EXPLORER_URL = "https://b2n.explorer.caldera.xyz"
+SYMBOL = "BRN"
+
+# 需要查询的账户列表
+ACCOUNTS = [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+]
+
+# 连接到 Caldera 区块链
+print("尝试连接到区块链...")
+w3 = Web3(Web3.HTTPProvider(RPC_URL))
+if not w3.is_connected():
+    raise Exception("无法连接到 Caldera 区块链 RPC")
+print("区块链连接成功")
+
+# 查询总余额的函数
+def get_total_balance():
+    total_balance = 0
+    for account in ACCOUNTS:
+        try:
+            balance_wei = w3.eth.get_balance(account)
+            balance = w3.from_wei(balance_wei, 'ether')
+            total_balance += balance
+        except Exception as e:
+            print(f"查询账户 {account} 失败: {str(e)}")
+    print(f"当前总余额: {total_balance}")
+    return total_balance
+
+# 发送 Telegram 消息的异步函数
+async def send_balance_update(bot, previous_balance, interval_count, start_time):
+    print(f"第 {interval_count} 次更新开始")
+    current_balance = get_total_balance()
+    difference = float(current_balance - (previous_balance or 0)) if previous_balance is not None else 0
+    
+    # 每1分钟、10分钟和60分钟发送消息
+    if interval_count % 60 == 0:  # 每3600秒（60分钟）
+        interval = "60分钟"
+    elif interval_count % 10 == 0:  # 每600秒（10分钟）
+        interval = "10分钟"
+    else:  # 每60秒（1分钟）
+        interval = "1分钟"
+    
+    message = f"📊 {SYMBOL} 总余额更新 ({time.strftime('%Y-%m-%d %H:%M:%S')}):\n"
+    message += f"当前总余额: {current_balance:.4f} {SYMBOL}\n"
+    message += f"{interval}增长: {difference:+.4f} {SYMBOL}"
+    
+    print(f"尝试发送消息: {message}")
+    try:
+        await bot.send_message(chat_id=CHAT_ID, text=message, parse_mode='Markdown')
+        print("消息发送成功")
+    except Exception as e:
+        print(f"消息发送失败: {str(e)}")
+    
+    return current_balance
+
+# 主循环
+async def main():
+    print("启动 Telegram Bot...")
+    bot = Bot(TELEGRAM_TOKEN)
+    app = Application.builder().token(TELEGRAM_TOKEN).build()
+    print("Bot 初始化完成")
+
+    previous_balance = None
+    interval_count = 0
+    start_time = time.time()
+    
+    while True:
+        interval_count += 1
+        previous_balance = await send_balance_update(bot, previous_balance, interval_count, start_time)
+        print(f"等待下一次更新...")
+        await asyncio.sleep(60)  # 每60秒更新一次
+
+if __name__ == "__main__":
+    asyncio.run(main())
