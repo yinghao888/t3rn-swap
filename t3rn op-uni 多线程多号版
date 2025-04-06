@@ -1,35 +1,16 @@
 from web3 import Web3
 import time
-import requests
 from typing import List, Dict
 import threading
 
 # === 可自定义参数 ===
 ACCOUNTS = [
-    {"private_key": "", "name": "Account1"},
-    {"private_key": "", "name": "Account2"},
-    {"private_key": "", "name": "Account3"},
-    {"private_key": "", "name": "Account4"},
-    {"private_key": "", "name": "Account5"},
-    {"private_key": "", "name": "Account6"},
-    {"private_key": "", "name": "Account7"},
-    {"private_key": "", "name": "Account8"},
-    {"private_key": "", "name": "Account9"},
-    {"private_key": "", "name": "Account10"},
-    {"private_key": "", "name": "Account11"},
-    {"private_key": "", "name": "Account12"},
-    {"private_key": "", "name": "Account13"},
-    {"private_key": "", "name": "Account14"},
+    {"private_key": "", "name": "账户1"},
+    {"private_key": "", "name": "账户2"},
+    {"private_key": "", "name": "账户3"},
+    {"private_key": "", "name": "账户4"},
 ]
 AMOUNT_ETH = 3.5  # 每次跨链金额（单位：ETH）
-TIMES = 50  # 每个账户每轮互跨来回次数
-DELAY_BETWEEN_ACCOUNTS = 0.01  # 每个账户之间的延迟（秒）
-DELAY_BETWEEN_ROUNDS = 10 * 60  # 每轮之间的延迟（10分钟，从第一段代码移植）
-
-# Telegram 参数
-TELEGRAM_TOKEN = "6993725114:AAHiPLxxYSt-TGiylqxscjkDC7ba2iJsilE"
-TELEGRAM_CHAT_ID = "6573297379"
-TELEGRAM_REPORT_INTERVAL = 600  # 每 10 分钟（600 秒）发送一次报告
 
 # RPC 地址
 UNI_RPC_URL = "https://unichain-sepolia.drpc.org"
@@ -71,22 +52,6 @@ for acc in ACCOUNTS:
         "arb_data": ARB_DATA_TEMPLATE.format(address=address)   # ARB -> UNI
     })
 
-# 发送 Telegram 消息
-def send_telegram_message(message: str):
-    try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        data = {
-            "chat_id": TELEGRAM_CHAT_ID,
-            "text": message
-        }
-        response = requests.post(url, data=data)
-        if response.json().get("ok"):
-            print(f"📩 Telegram 消息发送成功: {message}")
-        else:
-            print(f"❌ Telegram 消息发送失败: {response.json()}")
-    except Exception as e:
-        print(f"❌ Telegram 消息发送失败: {e}")
-
 # 将秒数转换为可读的时间格式
 def format_time(seconds: float) -> str:
     hours = int(seconds // 3600)
@@ -94,7 +59,7 @@ def format_time(seconds: float) -> str:
     secs = int(seconds % 60)
     return f"{hours}小时 {minutes}分钟 {secs}秒"
 
-# 定时报告和分钟统计函数
+# 分钟统计函数
 def report_worker():
     global success_count, total_success_count, minute_success_count, last_minute_time, start_time
     while True:
@@ -110,12 +75,6 @@ def report_worker():
             print(f"{YELLOW}=================================================={RESET}\n")
             minute_success_count = 0
             last_minute_time = current_time
-        # 每10分钟报告
-        if current_time - last_minute_time >= TELEGRAM_REPORT_INTERVAL:
-            runtime = current_time - start_time
-            message = f"过去 10 分钟完成跨链次数: {success_count} 🚀\n总计完成: {total_success_count} 🎉\n运行时间: {format_time(runtime)} ⏰"
-            send_telegram_message(message)
-            success_count = 0
         time.sleep(1)
 
 # 从 UNI 跨到 ARB
@@ -225,12 +184,11 @@ def run_bridge():
     report_thread.start()
 
     round_count = 0
-    while True:  # 无限循环
+    while True:  # 外层无限循环（轮次）
         round_count += 1
         print(f"\n{YELLOW}✨ === 第 {round_count} 轮跨链开始 === ✨{RESET}")
         
-        for i in range(TIMES):
-            print(f"\n{BLUE}👉 第 {i+1}/{TIMES} 次跨链操作{RESET}")
+        while True:  # 内层无限循环（代替 TIMES）
             for account_info in accounts:
                 print(f"{BLUE}👤 处理账户: {account_info['name']} 🌟{RESET}")
                 
@@ -243,12 +201,6 @@ def run_bridge():
                 arb_success = bridge_arb_to_uni(account_info, AMOUNT_ETH, w3_arb)
                 if not arb_success:
                     print(f"⚠️ {account_info['name']} ARB -> UNI 失败，继续下一账户 😅")
-                
-                # 账户间延迟
-                time.sleep(DELAY_BETWEEN_ACCOUNTS)
-        
-        print(f"{GREEN}🎉 第 {round_count} 轮跨链操作完成，等待 {DELAY_BETWEEN_ROUNDS // 60} 分钟后开始下一轮... ⏳{RESET}")
-        time.sleep(DELAY_BETWEEN_ROUNDS)  # 每轮结束后等待 10 分钟
 
 if __name__ == "__main__":
     run_bridge()
