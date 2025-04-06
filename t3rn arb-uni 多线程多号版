@@ -188,7 +188,7 @@ def run_bridge():
         round_count += 1
         print(f"\n{YELLOW}✨ === 第 {round_count} 轮跨链开始 === ✨{RESET}")
         
-        while True:  # 内层无限循环（代替 TIMES）
+        while True:  # 内层无限循环
             for account_info in accounts:
                 print(f"{BLUE}👤 处理账户: {account_info['name']} 🌟{RESET}")
                 
