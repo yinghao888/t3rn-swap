@@ -11,14 +11,12 @@ pip install --upgrade web3
 ```bash
 nano t3rn.py
 ```
-参数配置：只能修改私匙和互跨次数，跨链金额不能更改。需要更改的请修改代码中对应的input data
+参数配置：只能修改私匙，跨链金额不能更改。
 
 PRIVATE_KEY = "0x1234567890" #填写私钥
 
-TIMES = 1000 # 互跨来回次数
 
-
-op_uni.py OP<->UNI 互SWAP刷奖励
+op_uni.py ARB<->UNI 互SWAP刷奖励
 
 ```bash
 python3 t3rn.py
