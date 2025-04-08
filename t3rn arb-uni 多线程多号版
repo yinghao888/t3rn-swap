@@ -7,12 +7,11 @@ import random
 ACCOUNTS = [
     {"private_key": "", "name": "账户1"},
     {"private_key": "", "name": "账户2"},
-    {"private_key": "", "name": "账户3"},
-    {"private_key": "", "name": "账户4"},
 ]
 AMOUNT_ETH = 3.5
 PAUSE_DURATION = 120
 MAX_FAILURES = 3
+RPC_PAUSE_DURATION = 600  # 10分钟
 
 UNI_RPC_URLS = [
     "https://unichain-sepolia.drpc.org",
@@ -60,18 +59,27 @@ class RPCManager:
         self.rpc_urls = rpc_urls
         self.current_index = -1
         self.failed_attempts = {}
+        self.paused_until = {}
 
     def get_next_rpc(self) -> str:
         self.current_index = (self.current_index + 1) % len(self.rpc_urls)
         rpc_url = self.rpc_urls[self.current_index]
-        while self.failed_attempts.get(rpc_url, 0) >= MAX_FAILURES:
+        current_time = time.time()
+        while (self.failed_attempts.get(rpc_url, 0) >= MAX_FAILURES or 
+               current_time < self.paused_until.get(rpc_url, 0)):
             self.current_index = (self.current_index + 1) % len(self.rpc_urls)
             rpc_url = self.rpc_urls[self.current_index]
+            if current_time < self.paused_until.get(rpc_url, 0):
+                remaining = self.paused_until[rpc_url] - current_time
+                print(f"⏳ RPC {rpc_url} 暂停中，剩余 {int(remaining)} 秒 ⏳")
         return rpc_url
 
     def mark_failure(self, rpc_url: str):
         self.failed_attempts[rpc_url] = self.failed_attempts.get(rpc_url, 0) + 1
         print(f"{YELLOW}RPC {rpc_url} 失败次数: {self.failed_attempts[rpc_url]} 🚨{RESET}")
+        if self.failed_attempts[rpc_url] >= MAX_FAILURES:
+            self.paused_until[rpc_url] = time.time() + RPC_PAUSE_DURATION
+            print(f"⏸️ RPC {rpc_url} 失败 {MAX_FAILURES} 次，暂停 {RPC_PAUSE_DURATION} 秒 😞")
 
     def create_web3_instance(self) -> Web3:
         while True:
@@ -83,6 +91,30 @@ class RPCManager:
                 self.mark_failure(rpc_url)
                 print(f"{RED}无法连接到RPC: {rpc_url}，换下一个 🔄{RESET}")
                 time.sleep(1)
+
+    def test_all_rpcs(self):
+        valid_rpcs = []
+        for rpc_url in self.rpc_urls[:]:
+            success = False
+            for attempt in range(MAX_FAILURES):
+                w3 = Web3(Web3.HTTPProvider(rpc_url, request_kwargs={'timeout': 30}))
+                if w3.is_connected():
+                    print(f"{GREEN}RPC {rpc_url} 测试成功 🎉")
+                    success = True
+                    break
+                else:
+                    print(f"{RED}RPC {rpc_url} 测试失败 (第 {attempt + 1}/{MAX_FAILURES} 次) 😵")
+                    time.sleep(1)
+            if success:
+                valid_rpcs.append(rpc_url)
+            else:
+                self.paused_until[rpc_url] = time.time() + RPC_PAUSE_DURATION
+                print(f"⏸️ RPC {rpc_url} 测试全部失败，暂停 {RPC_PAUSE_DURATION} 秒 🚫")
+        self.rpc_urls = valid_rpcs
+        if not self.rpc_urls:
+            print(f"{RED}所有 RPC 都不可用，程序退出 😭{RESET}")
+            exit(1)
+        print(f"{GREEN}可用 RPC 数量: {len(self.rpc_urls)} 🌟{RESET}")
 
 accounts: List[Dict] = []
 for acc in ACCOUNTS:
@@ -219,7 +251,7 @@ def bridge_arb_to_uni(account_info: Dict, amount_eth: float, arb_manager: RPCMan
             'chainId': 421614,
             'data': account_info["arb_data"]
         }
-        signed_tx = w3_arb.eth.account.sign_transaction(tx, account_info["private_key"])
+        signed_tx = w3 eth.account.sign_transaction(tx, account_info["private_key"])
         raw_tx = signed_tx.raw_transaction if hasattr(signed_tx, 'raw_transaction') else signed_tx['raw']
         tx_hash = w3_arb.eth.send_raw_transaction(raw_tx)
         tx_receipt = w3_arb.eth.wait_for_transaction_receipt(tx_hash)
@@ -246,6 +278,11 @@ def run_bridge():
     
     uni_manager = RPCManager(UNI_RPC_URLS)
     arb_manager = RPCManager(ARB_RPC_URLS)
+
+    print(f"{YELLOW}开始测试 UNI RPCs... 🚀{RESET}")
+    uni_manager.test_all_rpcs()
+    print(f"{YELLOW}开始测试 ARB RPCs... 🚀{RESET}")
+    arb_manager.test_all_rpcs()
 
     report_thread = threading.Thread(target=report_worker, daemon=True)
     report_thread.start()
