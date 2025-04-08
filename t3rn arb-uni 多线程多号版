@@ -3,6 +3,8 @@ import time
 from typing import List, Dict
 import threading
 
+# === 关注作者推特@hao3313076获取最新脚本 ===
+
 # === 可自定义参数 ===
 ACCOUNTS = [
     {"private_key": "", "name": "账户1"},
@@ -30,7 +32,7 @@ RESET = "\033[0m"
 
 # 全局计数器
 success_count = 0
-total_success_count = 0
+total_success_count = 0  # 修复语法错误，初始化为 0
 minute_success_count = 0
 last_minute_time = time.time()
 start_time = time.time()  # 程序开始时间
@@ -61,14 +63,15 @@ def report_worker():
     global success_count, total_success_count, minute_success_count, last_minute_time, start_time
     while True:
         current_time = time.time()
-        # 每分钟统计
-        if current_time - last_minute_time >= 60:
+        # 每30秒统计
+        if current_time - last_minute_time >= 30:
             runtime = current_time - start_time
             print(f"\n{YELLOW}=================================================={RESET}")
-            print(f"{GREEN} 分钟交易统计 {RESET}")
-            print(f"{BLUE}上一分钟完成: {minute_success_count} 笔交易 {RESET}")
+            print(f"{GREEN} 30秒交易统计 {RESET}")
+            print(f"{BLUE}过去30秒完成: {minute_success_count} 笔交易 {RESET}")
             print(f"{BLUE}累计完成总数: {total_success_count} 笔交易 {RESET}")
             print(f"{BLUE}累计运行时间: {format_time(runtime)} {RESET}")
+            print(f"{BLUE}关注作者推特@hao3313076获取最新脚本 {RESET}")
             print(f"{YELLOW}=================================================={RESET}\n")
             minute_success_count = 0
             last_minute_time = current_time
@@ -80,13 +83,8 @@ def bridge_uni_to_arb(account_info: Dict, amount_eth: float, w3_uni: Web3) -> bo
     try:
         amount_wei = w3_uni.to_wei(amount_eth, 'ether')
         balance_uni = w3_uni.eth.get_balance(account_info["address"])
-        gas_price = w3_uni.eth.gas_price  # 动态获取燃气价格
-        gas_limit = int(w3_uni.eth.estimate_gas({
-            'from': account_info["address"],
-            'to': UNI_CONTRACT_ADDRESS,
-            'value': amount_wei,
-            'data': account_info["uni_data"]
-        }) * 1.2)  # 增加 20% 缓冲
+        gas_price = w3_uni.to_wei(1.6, 'gwei')
+        gas_limit = 400000
         estimated_gas_cost = gas_price * gas_limit
         total_cost = amount_wei + estimated_gas_cost
         print(f" {account_info['name']} UNI 余额: {w3_uni.from_wei(balance_uni, 'ether')} ETH")
@@ -117,11 +115,8 @@ def bridge_uni_to_arb(account_info: Dict, amount_eth: float, w3_uni: Web3) -> bo
         total_success_count += 1
         minute_success_count += 1
         return True
-    except ValueError as ve:
-        print(f" {account_info['name']} UNI -> ARB 失败: 值错误，可能由于燃气估计或余额问题 - {ve} ")
-        return False
     except Exception as e:
-        print(f" {account_info['name']} UNI -> ARB 失败: 未知错误 - {e} ")
+        print(f" {account_info['name']} UNI -> ARB 失败: {e} ")
         return False
 
 # 从 ARB 跨回 UNI
@@ -130,13 +125,8 @@ def bridge_arb_to_uni(account_info: Dict, amount_eth: float, w3_arb: Web3) -> bo
     try:
         amount_wei = w3_arb.to_wei(amount_eth, 'ether')
         balance_arb = w3_arb.eth.get_balance(account_info["address"])
-        gas_price = w3_arb.eth.gas_price  # 动态获取燃气价格
-        gas_limit = int(w3_arb.eth.estimate_gas({
-            'from': account_info["address"],
-            'to': ARB_CONTRACT_ADDRESS,
-            'value': amount_wei,
-            'data': account_info["arb_data"]
-        }) * 1.2)  # 增加 20% 缓冲
+        gas_price = w3_arb.to_wei(0.1, 'gwei')
+        gas_limit = 400000
         estimated_gas_cost = gas_price * gas_limit
         total_cost = amount_wei + estimated_gas_cost
         print(f" {account_info['name']} ARB 余额: {w3_arb.from_wei(balance_arb, 'ether')} ETH")
@@ -167,11 +157,8 @@ def bridge_arb_to_uni(account_info: Dict, amount_eth: float, w3_arb: Web3) -> bo
         total_success_count += 1
         minute_success_count += 1
         return True
-    except ValueError as ve:
-        print(f" {account_info['name']} ARB -> UNI 失败: 值错误，可能由于燃气估计或余额问题 - {ve} ")
-        return False
     except Exception as e:
-        print(f" {account_info['name']} ARB -> UNI 失败: 未知错误 - {e} ")
+        print(f" {account_info['name']} ARB -> UNI 失败: {e} ")
         return False
 
 # 主执行逻辑（无限循环）
@@ -217,3 +204,5 @@ def run_bridge():
 
 if __name__ == "__main__":
     run_bridge()
+
+# === 关注作者推特@hao3313076获取最新脚本 ===
