@@ -2,186 +2,99 @@ from web3 import Web3
 import time
 from typing import List, Dict
 import threading
-import random
 
+# === 可自定义参数 ===
 ACCOUNTS = [
     {"private_key": "", "name": "账户1"},
-    {"private_key": "", "name": "账户2"},
 ]
-AMOUNT_ETH = 3.5
-PAUSE_DURATION = 120
-MAX_FAILURES = 3
-RPC_PAUSE_DURATION = 600  # 10分钟
+AMOUNT_ETH = 3.5  # 每次跨链金额（单位：ETH）
 
-UNI_RPC_URLS = [
-    "https://unichain-sepolia.drpc.org",
-    "https://sepolia.unichain.org",
-    "https://unichain-sepolia-rpc.publicnode.com",
-    "https://endpoints.omniatech.io/v1/unichain/sepolia/public",
-    "https://unichain-sepolia.api.onfinality.io/public",
-    "https://node.histori.xyz/unichain-sepolia/8ry9f6t9dct1se2hlagxnd9n2a",
-    "https://unichain-sepolia.public.blastapi.io",
-    "https://unichain-sepolia.blockpi.network/v1/rpc/public",
-    "https://unichain-sepolia.rpc.hypersync.xyz/",
-    "https://unichain-sepolia.gateway.tenderly.co",
-    "https://1301.rpc.thirdweb.com/"
-]
-ARB_RPC_URLS = [
-    "https://sepolia-rollup.arbitrum.io/rpc",
-    "https://arbitrum-sepolia.blockpi.network/v1/rpc/private",
-    "https://public.stackup.sh/api/v1/node/arbitrum-sepolia",
-    "https://endpoints.omniatech.io/v1/arbitrum/sepolia/public",
-    "https://arbitrum-sepolia.gateway.tenderly.co",
-    "https://api.zan.top/arb-sepolia",
-    "https://arbitrum-sepolia-rpc.publicnode.com"
-]
+# RPC 地址
+UNI_RPC_URL = "https://unichain-sepolia.drpc.org"
+ARB_RPC_URL = "https://sepolia-rollup.arbitrum.io/rpc"
 
-ARB_CONTRACT_ADDRESS = "0x22B65d0B9b59af4D3Ed59F18b9Ad53f5F4908B54"
-UNI_CONTRACT_ADDRESS = "0x1cEAb5967E5f078Fa0FEC3DFfD0394Af1fEeBCC9"
+# 合约地址
+ARB_CONTRACT_ADDRESS = "0x22B65d0B9b59af4D3Ed59F18b9Ad53f5F4908B54"  # ARB -> UNI
+UNI_CONTRACT_ADDRESS = "0x1cEAb5967E5f078Fa0FEC3DFfD0394Af1fEeBCC9"  # UNI -> ARB
 
+# 数据模板
 UNI_DATA_TEMPLATE = "0x56591d5961726274000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000{address}0000000000000000000000000000000000000000000000003092467525c6a05c0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000030927f74c9de0000"
 ARB_DATA_TEMPLATE = "0x56591d59756e6974000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000{address}00000000000000000000000000000000000000000000000030924a11f45534fa0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000030927f74c9de0000"
 
+# ANSI 颜色代码
 GREEN = "\033[92m"
 YELLOW = "\033[93m"
 RED = "\033[91m"
 BLUE = "\033[94m"
 RESET = "\033[0m"
 
+# 全局计数器
 success_count = 0
 total_success_count = 0
 minute_success_count = 0
 last_minute_time = time.time()
-start_time = time.time()
+start_time = time.time()  # 程序开始时间
 
-class RPCManager:
-    def __init__(self, rpc_urls: List[str]):
-        self.rpc_urls = rpc_urls
-        self.current_index = -1
-        self.failed_attempts = {}
-        self.paused_until = {}
-
-    def get_next_rpc(self) -> str:
-        self.current_index = (self.current_index + 1) % len(self.rpc_urls)
-        rpc_url = self.rpc_urls[self.current_index]
-        current_time = time.time()
-        while (self.failed_attempts.get(rpc_url, 0) >= MAX_FAILURES or 
-               current_time < self.paused_until.get(rpc_url, 0)):
-            self.current_index = (self.current_index + 1) % len(self.rpc_urls)
-            rpc_url = self.rpc_urls[self.current_index]
-            if current_time < self.paused_until.get(rpc_url, 0):
-                remaining = self.paused_until[rpc_url] - current_time
-                print(f"⏳ RPC {rpc_url} 暂停中，剩余 {int(remaining)} 秒 ⏳")
-        return rpc_url
-
-    def mark_failure(self, rpc_url: str):
-        self.failed_attempts[rpc_url] = self.failed_attempts.get(rpc_url, 0) + 1
-        print(f"{YELLOW}RPC {rpc_url} 失败次数: {self.failed_attempts[rpc_url]} 🚨{RESET}")
-        if self.failed_attempts[rpc_url] >= MAX_FAILURES:
-            self.paused_until[rpc_url] = time.time() + RPC_PAUSE_DURATION
-            print(f"⏸️ RPC {rpc_url} 失败 {MAX_FAILURES} 次，暂停 {RPC_PAUSE_DURATION} 秒 😞")
-
-    def create_web3_instance(self) -> Web3:
-        while True:
-            rpc_url = self.get_next_rpc()
-            w3 = Web3(Web3.HTTPProvider(rpc_url, request_kwargs={'timeout': 30}))
-            if w3.is_connected():
-                return w3
-            else:
-                self.mark_failure(rpc_url)
-                print(f"{RED}无法连接到RPC: {rpc_url}，换下一个 🔄{RESET}")
-                time.sleep(1)
-
-    def test_all_rpcs(self):
-        valid_rpcs = []
-        for rpc_url in self.rpc_urls[:]:
-            success = False
-            for attempt in range(MAX_FAILURES):
-                w3 = Web3(Web3.HTTPProvider(rpc_url, request_kwargs={'timeout': 30}))
-                if w3.is_connected():
-                    print(f"{GREEN}RPC {rpc_url} 测试成功 🎉")
-                    success = True
-                    break
-                else:
-                    print(f"{RED}RPC {rpc_url} 测试失败 (第 {attempt + 1}/{MAX_FAILURES} 次) 😵")
-                    time.sleep(1)
-            if success:
-                valid_rpcs.append(rpc_url)
-            else:
-                self.paused_until[rpc_url] = time.time() + RPC_PAUSE_DURATION
-                print(f"⏸️ RPC {rpc_url} 测试全部失败，暂停 {RPC_PAUSE_DURATION} 秒 🚫")
-        self.rpc_urls = valid_rpcs
-        if not self.rpc_urls:
-            print(f"{RED}所有 RPC 都不可用，程序退出 😭{RESET}")
-            exit(1)
-        print(f"{GREEN}可用 RPC 数量: {len(self.rpc_urls)} 🌟{RESET}")
-
+# 账户初始化
 accounts: List[Dict] = []
 for acc in ACCOUNTS:
-    temp_w3 = Web3(Web3.HTTPProvider(UNI_RPC_URLS[0]))
-    account = temp_w3.eth.account.from_key(acc["private_key"])
-    address = account.address[2:]
+    account = Web3(Web3.HTTPProvider(UNI_RPC_URL)).eth.account.from_key(acc["private_key"])
+    address = account.address[2:]  # 去掉 "0x"
     accounts.append({
         "name": acc["name"],
         "private_key": acc["private_key"],
         "address": account.address,
         "address_no_prefix": address,
-        "uni_data": UNI_DATA_TEMPLATE.format(address=address),
-        "arb_data": ARB_DATA_TEMPLATE.format(address=address),
-        "uni_to_arb_pause_until": 0,
-        "arb_to_uni_pause_until": 0,
-        "uni_to_arb_failures": 0,
-        "arb_to_uni_failures": 0
+        "uni_data": UNI_DATA_TEMPLATE.format(address=address),  # UNI -> ARB
+        "arb_data": ARB_DATA_TEMPLATE.format(address=address)   # ARB -> UNI
     })
 
+# 将秒数转换为可读的时间格式
 def format_time(seconds: float) -> str:
     hours = int(seconds // 3600)
     minutes = int((seconds % 3600) // 60)
     secs = int(seconds % 60)
     return f"{hours}小时 {minutes}分钟 {secs}秒"
 
+# 分钟统计函数
 def report_worker():
     global success_count, total_success_count, minute_success_count, last_minute_time, start_time
     while True:
         current_time = time.time()
+        # 每分钟统计
         if current_time - last_minute_time >= 60:
             runtime = current_time - start_time
-            print(f"\n{YELLOW}===== 📊 交易报告 📊 ====={RESET}")
-            print(f"{GREEN}🎉 上一分钟完成: {minute_success_count} 笔交易{RESET}")
-            print(f"{BLUE}🌟 累计完成: {total_success_count} 笔交易{RESET}")
-            print(f"{BLUE}⏰ 运行时间: {format_time(runtime)}{RESET}")
-            print(f"{YELLOW}=========================={RESET}\n")
+            print(f"\n{YELLOW}=================================================={RESET}")
+            print(f"{GREEN} 分钟交易统计 {RESET}")
+            print(f"{BLUE}上一分钟完成: {minute_success_count} 笔交易 {RESET}")
+            print(f"{BLUE}累计完成总数: {total_success_count} 笔交易 {RESET}")
+            print(f"{BLUE}累计运行时间: {format_time(runtime)} {RESET}")
+            print(f"{YELLOW}=================================================={RESET}\n")
             minute_success_count = 0
             last_minute_time = current_time
         time.sleep(1)
 
-def bridge_uni_to_arb(account_info: Dict, amount_eth: float, uni_manager: RPCManager) -> bool:
+# 从 UNI 跨到 ARB
+def bridge_uni_to_arb(account_info: Dict, amount_eth: float, w3_uni: Web3) -> bool:
     global success_count, total_success_count, minute_success_count
-    current_time = time.time()
-    
-    if current_time < account_info["uni_to_arb_pause_until"]:
-        remaining = account_info["uni_to_arb_pause_until"] - current_time
-        print(f"⏰ {account_info['name']} UNI ➡️ ARB 暂停中... 还剩 {int(remaining)} 秒 😴")
-        return False
-
-    w3_uni = uni_manager.create_web3_instance()
     try:
         amount_wei = w3_uni.to_wei(amount_eth, 'ether')
         balance_uni = w3_uni.eth.get_balance(account_info["address"])
-        gas_price = w3_uni.to_wei(1.6, 'gwei')
-        gas_limit = 400000
+        gas_price = w3_uni.eth.gas_price  # 动态获取燃气价格
+        gas_limit = int(w3_uni.eth.estimate_gas({
+            'from': account_info["address"],
+            'to': UNI_CONTRACT_ADDRESS,
+            'value': amount_wei,
+            'data': account_info["uni_data"]
+        }) * 1.2)  # 增加 20% 缓冲
         estimated_gas_cost = gas_price * gas_limit
         total_cost = amount_wei + estimated_gas_cost
-        
+        print(f" {account_info['name']} UNI 余额: {w3_uni.from_wei(balance_uni, 'ether')} ETH")
+        print(f" 预估 Gas 费用: {w3_uni.from_wei(estimated_gas_cost, 'ether')} ETH")
+        print(f" 总费用 (金额 + Gas): {w3_uni.from_wei(total_cost, 'ether')} ETH")
         if balance_uni < total_cost:
-            account_info["uni_to_arb_failures"] += 1
-            print(f"💸 {account_info['name']} UNI ➡️ ARB 余额不足，失败次数: {account_info['uni_to_arb_failures']} ⚠️")
-            if account_info["uni_to_arb_failures"] >= MAX_FAILURES:
-                account_info["uni_to_arb_pause_until"] = current_time + PAUSE_DURATION
-                account_info["uni_to_arb_failures"] = 0
-                print(f"⏸️ {account_info['name']} UNI ➡️ ARB 失败 {MAX_FAILURES} 次，暂停 {PAUSE_DURATION} 秒 😞")
+            print(f" {account_info['name']} UNI 余额不足，需要 {w3_uni.from_wei(total_cost, 'ether')} ETH，实际余额 {w3_uni.from_wei(balance_uni, 'ether')} ETH ")
             return False
-        
         nonce = w3_uni.eth.get_transaction_count(account_info["address"])
         tx = {
             'from': account_info["address"],
@@ -193,53 +106,45 @@ def bridge_uni_to_arb(account_info: Dict, amount_eth: float, uni_manager: RPCMan
             'chainId': 1301,
             'data': account_info["uni_data"]
         }
+        print(f" {account_info['name']} UNI -> ARB: 发送 {amount_eth} ETH")
         signed_tx = w3_uni.eth.account.sign_transaction(tx, account_info["private_key"])
         raw_tx = signed_tx.raw_transaction if hasattr(signed_tx, 'raw_transaction') else signed_tx['raw']
         tx_hash = w3_uni.eth.send_raw_transaction(raw_tx)
+        print(f" {account_info['name']} UNI -> ARB 交易哈希: {w3_uni.to_hex(tx_hash)}")
         tx_receipt = w3_uni.eth.wait_for_transaction_receipt(tx_hash)
-        print(f"🎉 {account_info['name']} UNI ➡️ ARB 跨链成功！区块: {tx_receipt.blockNumber} 🚀")
-        account_info["uni_to_arb_failures"] = 0
+        print(f" {account_info['name']} 交易确认，区块号: {tx_receipt.blockNumber} ")
         success_count += 1
         total_success_count += 1
         minute_success_count += 1
         return True
-    except Exception:
-        account_info["uni_to_arb_failures"] += 1
-        print(f"😵 {account_info['name']} UNI ➡️ ARB 跨链失败，失败次数: {account_info['uni_to_arb_failures']} ⚠️")
-        if account_info["uni_to_arb_failures"] >= MAX_FAILURES:
-            account_info["uni_to_arb_pause_until"] = current_time + PAUSE_DURATION
-            account_info["uni_to_arb_failures"] = 0
-            print(f"⏸️ {account_info['name']} UNI ➡️ ARB 失败 {MAX_FAILURES} 次，暂停 {PAUSE_DURATION} 秒 😞")
-        uni_manager.mark_failure(w3_uni.provider.endpoint_uri)
+    except ValueError as ve:
+        print(f" {account_info['name']} UNI -> ARB 失败: 值错误，可能由于燃气估计或余额问题 - {ve} ")
+        return False
+    except Exception as e:
+        print(f" {account_info['name']} UNI -> ARB 失败: 未知错误 - {e} ")
         return False
 
-def bridge_arb_to_uni(account_info: Dict, amount_eth: float, arb_manager: RPCManager) -> bool:
+# 从 ARB 跨回 UNI
+def bridge_arb_to_uni(account_info: Dict, amount_eth: float, w3_arb: Web3) -> bool:
     global success_count, total_success_count, minute_success_count
-    current_time = time.time()
-    
-    if current_time < account_info["arb_to_uni_pause_until"]:
-        remaining = account_info["arb_to_uni_pause_until"] - current_time
-        print(f"⏰ {account_info['name']} ARB ➡️ UNI 暂停中... 还剩 {int(remaining)} 秒 😴")
-        return False
-
-    w3_arb = arb_manager.create_web3_instance()
     try:
         amount_wei = w3_arb.to_wei(amount_eth, 'ether')
         balance_arb = w3_arb.eth.get_balance(account_info["address"])
-        gas_price = w3_arb.to_wei(0.1, 'gwei')
-        gas_limit = 400000
+        gas_price = w3_arb.eth.gas_price  # 动态获取燃气价格
+        gas_limit = int(w3_arb.eth.estimate_gas({
+            'from': account_info["address"],
+            'to': ARB_CONTRACT_ADDRESS,
+            'value': amount_wei,
+            'data': account_info["arb_data"]
+        }) * 1.2)  # 增加 20% 缓冲
         estimated_gas_cost = gas_price * gas_limit
         total_cost = amount_wei + estimated_gas_cost
-        
+        print(f" {account_info['name']} ARB 余额: {w3_arb.from_wei(balance_arb, 'ether')} ETH")
+        print(f" 预估 Gas 费用: {w3_arb.from_wei(estimated_gas_cost, 'ether')} ETH")
+        print(f" 总费用 (金额 + Gas): {w3_arb.from_wei(total_cost, 'ether')} ETH")
         if balance_arb < total_cost:
-            account_info["arb_to_uni_failures"] += 1
-            print(f"💸 {account_info['name']} ARB ➡️ UNI 余额不足，失败次数: {account_info['arb_to_uni_failures']} ⚠️")
-            if account_info["arb_to_uni_failures"] >= MAX_FAILURES:
-                account_info["arb_to_uni_pause_until"] = current_time + PAUSE_DURATION
-                account_info["arb_to_uni_failures"] = 0
-                print(f"⏸️ {account_info['name']} ARB ➡️ UNI 失败 {MAX_FAILURES} 次，暂停 {PAUSE_DURATION} 秒 😞")
+            print(f" {account_info['name']} ARB 余额不足，需要 {w3_arb.from_wei(total_cost, 'ether')} ETH，实际余额 {w3_arb.from_wei(balance_arb, 'ether')} ETH ")
             return False
-        
         nonce = w3_arb.eth.get_transaction_count(account_info["address"])
         tx = {
             'from': account_info["address"],
@@ -251,59 +156,64 @@ def bridge_arb_to_uni(account_info: Dict, amount_eth: float, arb_manager: RPCMan
             'chainId': 421614,
             'data': account_info["arb_data"]
         }
-        signed_tx = w3 eth.account.sign_transaction(tx, account_info["private_key"])
+        print(f" {account_info['name']} ARB -> UNI: 发送 {amount_eth} ETH")
+        signed_tx = w3_arb.eth.account.sign_transaction(tx, account_info["private_key"])
         raw_tx = signed_tx.raw_transaction if hasattr(signed_tx, 'raw_transaction') else signed_tx['raw']
         tx_hash = w3_arb.eth.send_raw_transaction(raw_tx)
+        print(f" {account_info['name']} ARB -> UNI 交易哈希: {w3_arb.to_hex(tx_hash)}")
         tx_receipt = w3_arb.eth.wait_for_transaction_receipt(tx_hash)
-        print(f"🎉 {account_info['name']} ARB ➡️ UNI 跨链成功！区块: {tx_receipt.blockNumber} 🚀")
-        account_info["arb_to_uni_failures"] = 0
+        print(f" {account_info['name']} 交易确认，区块号: {tx_receipt.blockNumber} ")
         success_count += 1
         total_success_count += 1
         minute_success_count += 1
         return True
-    except Exception:
-        account_info["arb_to_uni_failures"] += 1
-        print(f"😵 {account_info['name']} ARB ➡️ UNI 跨链失败，失败次数: {account_info['arb_to_uni_failures']} ⚠️")
-        if account_info["arb_to_uni_failures"] >= MAX_FAILURES:
-            account_info["arb_to_uni_pause_until"] = current_time + PAUSE_DURATION
-            account_info["arb_to_uni_failures"] = 0
-            print(f"⏸️ {account_info['name']} ARB ➡️ UNI 失败 {MAX_FAILURES} 次，暂停 {PAUSE_DURATION} 秒 😞")
-        arb_manager.mark_failure(w3_arb.provider.endpoint_uri)
+    except ValueError as ve:
+        print(f" {account_info['name']} ARB -> UNI 失败: 值错误，可能由于燃气估计或余额问题 - {ve} ")
+        return False
+    except Exception as e:
+        print(f" {account_info['name']} ARB -> UNI 失败: 未知错误 - {e} ")
         return False
 
+# 主执行逻辑（无限循环）
 def run_bridge():
     global start_time
-    start_time = time.time()
-    print(f"🌈 启动跨链任务！{len(accounts)} 个账户，每次 {AMOUNT_ETH} ETH 🎉")
-    
-    uni_manager = RPCManager(UNI_RPC_URLS)
-    arb_manager = RPCManager(ARB_RPC_URLS)
+    start_time = time.time()  # 重置开始时间
+    print(f" 开始为 {len(accounts)} 个账户执行 UNI-ARB 无限循环跨链，每次 {AMOUNT_ETH} ETH ")
 
-    print(f"{YELLOW}开始测试 UNI RPCs... 🚀{RESET}")
-    uni_manager.test_all_rpcs()
-    print(f"{YELLOW}开始测试 ARB RPCs... 🚀{RESET}")
-    arb_manager.test_all_rpcs()
+    # 创建 Web3 实例
+    w3_uni = Web3(Web3.HTTPProvider(UNI_RPC_URL, request_kwargs={'timeout': 30}))
+    w3_arb = Web3(Web3.HTTPProvider(ARB_RPC_URL, request_kwargs={'timeout': 30}))
 
+    if not w3_uni.is_connected():
+        print(f"{RED} 无法连接到 UNI 测试网，程序退出 {RESET}")
+        return
+    if not w3_arb.is_connected():
+        print(f"{RED} 无法连接到 ARB 测试网，程序退出 {RESET}")
+        return
+    print(f"{GREEN} 成功连接到 UNI 和 ARB 测试网 {RESET}")
+
+    # 启动报告线程
     report_thread = threading.Thread(target=report_worker, daemon=True)
     report_thread.start()
 
     round_count = 0
-    while True:
+    while True:  # 外层无限循环（轮次）
         round_count += 1
-        print(f"\n{YELLOW}🚀 第 {round_count} 轮跨链开始！🚀{RESET}")
-        
-        for account_info in accounts:
-            print(f"{BLUE}👨‍🚀 处理账户: {account_info['name']} ✨{RESET}")
-            
-            uni_success = bridge_uni_to_arb(account_info, AMOUNT_ETH, uni_manager)
-            if not uni_success:
-                print(f"😓 {account_info['name']} UNI ➡️ ARB 未成功，继续尝试 ARB ➡️ UNI 🌈")
-            
-            arb_success = bridge_arb_to_uni(account_info, AMOUNT_ETH, arb_manager)
-            if not arb_success:
-                print(f"😓 {account_info['name']} ARB ➡️ UNI 未成功，进入下一账户 🔄")
-            
-            time.sleep(5)
+        print(f"\n{YELLOW} === 第 {round_count} 轮跨链开始 === {RESET}")
+
+        while True:  # 内层无限循环
+            for account_info in accounts:
+                print(f"{BLUE}👤 处理账户: {account_info['name']} 🌟{RESET}")
+                
+                # UNI -> ARB
+                uni_success = bridge_uni_to_arb(account_info, AMOUNT_ETH, w3_uni)
+                if not uni_success:
+                    print(f"⚠️ {account_info['name']} UNI -> ARB 失败，但将继续尝试 ARB -> UNI 😅")
+                
+                # 无论 UNI 是否成功，都尝试 ARB -> UNI
+                arb_success = bridge_arb_to_uni(account_info, AMOUNT_ETH, w3_arb)
+                if not arb_success:
+                    print(f"⚠️ {account_info['name']} ARB -> UNI 失败，继续下一账户 😅")
 
 if __name__ == "__main__":
     run_bridge()
