@@ -4,17 +4,16 @@ from typing import List, Dict
 import threading
 import random
 
-# === 可自定义参数 ===
 ACCOUNTS = [
     {"private_key": "", "name": "账户1"},
     {"private_key": "", "name": "账户2"},
     {"private_key": "", "name": "账户3"},
     {"private_key": "", "name": "账户4"},
 ]
-AMOUNT_ETH = 3.5  # 每次跨链金额（单位：ETH）
-PAUSE_DURATION = 120  # 余额不足时暂停时间（秒）
+AMOUNT_ETH = 3.5
+PAUSE_DURATION = 120
+MAX_FAILURES = 3
 
-# RPC 地址列表
 UNI_RPC_URLS = [
     "https://unichain-sepolia.drpc.org",
     "https://sepolia.unichain.org",
@@ -38,42 +37,37 @@ ARB_RPC_URLS = [
     "https://arbitrum-sepolia-rpc.publicnode.com"
 ]
 
-# 合约地址
-ARB_CONTRACT_ADDRESS = "0x22B65d0B9b59af4D3Ed59F18b9Ad53f5F4908B54"  # ARB -> UNI
-UNI_CONTRACT_ADDRESS = "0x1cEAb5967E5f078Fa0FEC3DFfD0394Af1fEeBCC9"  # UNI -> ARB
+ARB_CONTRACT_ADDRESS = "0x22B65d0B9b59af4D3Ed59F18b9Ad53f5F4908B54"
+UNI_CONTRACT_ADDRESS = "0x1cEAb5967E5f078Fa0FEC3DFfD0394Af1fEeBCC9"
 
-# 数据模板
 UNI_DATA_TEMPLATE = "0x56591d5961726274000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000{address}0000000000000000000000000000000000000000000000003092467525c6a05c0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000030927f74c9de0000"
 ARB_DATA_TEMPLATE = "0x56591d59756e6974000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000{address}00000000000000000000000000000000000000000000000030924a11f45534fa0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000030927f74c9de0000"
 
-# ANSI 颜色代码
 GREEN = "\033[92m"
 YELLOW = "\033[93m"
 RED = "\033[91m"
 BLUE = "\033[94m"
 RESET = "\033[0m"
 
-# 全局计数器
 success_count = 0
 total_success_count = 0
 minute_success_count = 0
 last_minute_time = time.time()
 start_time = time.time()
 
-# RPC轮询管理类
 class RPCManager:
     def __init__(self, rpc_urls: List[str]):
         self.rpc_urls = rpc_urls
-        self.current_index = 0
+        self.current_index = -1
         self.failed_attempts = {}
 
     def get_next_rpc(self) -> str:
-        available_rpcs = [url for url in self.rpc_urls if self.failed_attempts.get(url, 0) < 3]
-        if not available_rpcs:
-            print(f"{RED}所有RPC端点都不可用，重置失败计数器 😭{RESET}")
-            self.failed_attempts.clear()
-            available_rpcs = self.rpc_urls
-        return random.choice(available_rpcs)
+        self.current_index = (self.current_index + 1) % len(self.rpc_urls)
+        rpc_url = self.rpc_urls[self.current_index]
+        while self.failed_attempts.get(rpc_url, 0) >= MAX_FAILURES:
+            self.current_index = (self.current_index + 1) % len(self.rpc_urls)
+            rpc_url = self.rpc_urls[self.current_index]
+        return rpc_url
 
     def mark_failure(self, rpc_url: str):
         self.failed_attempts[rpc_url] = self.failed_attempts.get(rpc_url, 0) + 1
@@ -84,14 +78,12 @@ class RPCManager:
             rpc_url = self.get_next_rpc()
             w3 = Web3(Web3.HTTPProvider(rpc_url, request_kwargs={'timeout': 30}))
             if w3.is_connected():
-                print(f"{GREEN}连接到RPC: {rpc_url} 🚀{RESET}")
                 return w3
             else:
                 self.mark_failure(rpc_url)
                 print(f"{RED}无法连接到RPC: {rpc_url}，换下一个 🔄{RESET}")
                 time.sleep(1)
 
-# 账户初始化
 accounts: List[Dict] = []
 for acc in ACCOUNTS:
     temp_w3 = Web3(Web3.HTTPProvider(UNI_RPC_URLS[0]))
@@ -105,7 +97,9 @@ for acc in ACCOUNTS:
         "uni_data": UNI_DATA_TEMPLATE.format(address=address),
         "arb_data": ARB_DATA_TEMPLATE.format(address=address),
         "uni_to_arb_pause_until": 0,
-        "arb_to_uni_pause_until": 0
+        "arb_to_uni_pause_until": 0,
+        "uni_to_arb_failures": 0,
+        "arb_to_uni_failures": 0
     })
 
 def format_time(seconds: float) -> str:
@@ -148,8 +142,12 @@ def bridge_uni_to_arb(account_info: Dict, amount_eth: float, uni_manager: RPCMan
         total_cost = amount_wei + estimated_gas_cost
         
         if balance_uni < total_cost:
-            account_info["uni_to_arb_pause_until"] = current_time + PAUSE_DURATION
-            print(f"💸 {account_info['name']} UNI ➡️ ARB 余额不足，暂停 {PAUSE_DURATION} 秒 🛑")
+            account_info["uni_to_arb_failures"] += 1
+            print(f"💸 {account_info['name']} UNI ➡️ ARB 余额不足，失败次数: {account_info['uni_to_arb_failures']} ⚠️")
+            if account_info["uni_to_arb_failures"] >= MAX_FAILURES:
+                account_info["uni_to_arb_pause_until"] = current_time + PAUSE_DURATION
+                account_info["uni_to_arb_failures"] = 0
+                print(f"⏸️ {account_info['name']} UNI ➡️ ARB 失败 {MAX_FAILURES} 次，暂停 {PAUSE_DURATION} 秒 😞")
             return False
         
         nonce = w3_uni.eth.get_transaction_count(account_info["address"])
@@ -168,13 +166,18 @@ def bridge_uni_to_arb(account_info: Dict, amount_eth: float, uni_manager: RPCMan
         tx_hash = w3_uni.eth.send_raw_transaction(raw_tx)
         tx_receipt = w3_uni.eth.wait_for_transaction_receipt(tx_hash)
         print(f"🎉 {account_info['name']} UNI ➡️ ARB 跨链成功！区块: {tx_receipt.blockNumber} 🚀")
+        account_info["uni_to_arb_failures"] = 0
         success_count += 1
         total_success_count += 1
         minute_success_count += 1
         return True
     except Exception:
-        account_info["uni_to_arb_pause_until"] = current_time + PAUSE_DURATION
-        print(f"😵 {account_info['name']} UNI ➡️ ARB 跨链失败，暂停 {PAUSE_DURATION} 秒 🔄")
+        account_info["uni_to_arb_failures"] += 1
+        print(f"😵 {account_info['name']} UNI ➡️ ARB 跨链失败，失败次数: {account_info['uni_to_arb_failures']} ⚠️")
+        if account_info["uni_to_arb_failures"] >= MAX_FAILURES:
+            account_info["uni_to_arb_pause_until"] = current_time + PAUSE_DURATION
+            account_info["uni_to_arb_failures"] = 0
+            print(f"⏸️ {account_info['name']} UNI ➡️ ARB 失败 {MAX_FAILURES} 次，暂停 {PAUSE_DURATION} 秒 😞")
         uni_manager.mark_failure(w3_uni.provider.endpoint_uri)
         return False
 
@@ -197,8 +200,12 @@ def bridge_arb_to_uni(account_info: Dict, amount_eth: float, arb_manager: RPCMan
         total_cost = amount_wei + estimated_gas_cost
         
         if balance_arb < total_cost:
-            account_info["arb_to_uni_pause_until"] = current_time + PAUSE_DURATION
-            print(f"💸 {account_info['name']} ARB ➡️ UNI 余额不足，暂停 {PAUSE_DURATION} 秒 🛑")
+            account_info["arb_to_uni_failures"] += 1
+            print(f"💸 {account_info['name']} ARB ➡️ UNI 余额不足，失败次数: {account_info['arb_to_uni_failures']} ⚠️")
+            if account_info["arb_to_uni_failures"] >= MAX_FAILURES:
+                account_info["arb_to_uni_pause_until"] = current_time + PAUSE_DURATION
+                account_info["arb_to_uni_failures"] = 0
+                print(f"⏸️ {account_info['name']} ARB ➡️ UNI 失败 {MAX_FAILURES} 次，暂停 {PAUSE_DURATION} 秒 😞")
             return False
         
         nonce = w3_arb.eth.get_transaction_count(account_info["address"])
@@ -217,13 +224,18 @@ def bridge_arb_to_uni(account_info: Dict, amount_eth: float, arb_manager: RPCMan
         tx_hash = w3_arb.eth.send_raw_transaction(raw_tx)
         tx_receipt = w3_arb.eth.wait_for_transaction_receipt(tx_hash)
         print(f"🎉 {account_info['name']} ARB ➡️ UNI 跨链成功！区块: {tx_receipt.blockNumber} 🚀")
+        account_info["arb_to_uni_failures"] = 0
         success_count += 1
         total_success_count += 1
         minute_success_count += 1
         return True
     except Exception:
-        account_info["arb_to_uni_pause_until"] = current_time + PAUSE_DURATION
-        print(f"😵 {account_info['name']} ARB ➡️ UNI 跨链失败，暂停 {PAUSE_DURATION} 秒 🔄")
+        account_info["arb_to_uni_failures"] += 1
+        print(f"😵 {account_info['name']} ARB ➡️ UNI 跨链失败，失败次数: {account_info['arb_to_uni_failures']} ⚠️")
+        if account_info["arb_to_uni_failures"] >= MAX_FAILURES:
+            account_info["arb_to_uni_pause_until"] = current_time + PAUSE_DURATION
+            account_info["arb_to_uni_failures"] = 0
+            print(f"⏸️ {account_info['name']} ARB ➡️ UNI 失败 {MAX_FAILURES} 次，暂停 {PAUSE_DURATION} 秒 😞")
         arb_manager.mark_failure(w3_arb.provider.endpoint_uri)
         return False
 
