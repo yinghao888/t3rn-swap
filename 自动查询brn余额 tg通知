@@ -5,8 +5,8 @@ from telegram import Bot
 from telegram.ext import Application
 
 # 配置
-TELEGRAM_TOKEN = ""
-CHAT_ID = ""  # 请确保这是正确的 Chat ID
+TELEGRAM_TOKEN = "76913109181:AAF_5LsMgs37UCn0Dvgd2F32RO3L6Q-47Bk"
+CHAT_ID = "59631704377"
 RPC_URL = "https://b2n.rpc.caldera.xyz/http"
 CHAIN_ID = 334
 EXPLORER_URL = "https://b2n.explorer.caldera.xyz"
@@ -14,21 +14,21 @@ SYMBOL = "BRN"
 
 # 需要查询的账户列表
 ACCOUNTS = [
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    ""
+    "0x47c309E6e043A1FaA3CF1192bd21aD805501754bf",
+    "0x0FDf7AB111Cf8dfa2f4Ab817ce66F3125668A01bE",
+    "0xaF651dAAC529e53f894b9413dfE6154902ef33146",
+    "0x1Eb698d6BCA3d0CE050C7019a09f70Ea177b38109",
+    "0x14AC1408f11fda7A36d8A0107E7231E9737BBAa90",
+    "0xEDF6BB47ED383911b5C5612Bc92634b022099A085",
+    "0x3872D03422D42A8eA774518501470Ed38B2cC8dbc",
+    "0x9307d6c852168e3461E221E8B94379feEF4712a89",
+    "0xA18103fF2BD90929e7cCe17B5aa1A1e740e8E4BC4",
+    "0x06bbB935e73fC66d621E01b0A98995eB7dD4DDCc7",
+    "0x9cD0BdCb3fAA09E44Ce916cB81d4A9B8c772D01A1",
+    "0x2b767eCb0c9D88BCd1861176386D47bb9eEB21100",
+    "0x0c88631fF8B5f55a17e160570e50469CD3a190094",
+    "0x295A35Ec537736AEc8e11D4409bDDd4452f199F0D",
+    "0x3C47199dbC9Fe3ACD881ca17F87533C0aae05aDA2"
 ]
 
 # 连接到 Caldera 区块链
@@ -51,23 +51,33 @@ def get_total_balance():
     print(f"当前总余额: {total_balance}")
     return total_balance
 
+# 格式化时间
+def format_time(seconds):
+    hours = int(seconds // 3600)
+    minutes = int((seconds % 3600) // 60)
+    secs = int(seconds % 60)
+    return f"{hours}小时 {minutes}分钟 {secs}秒"
+
 # 发送 Telegram 消息的异步函数
-async def send_balance_update(bot, previous_balance, interval_count, start_time):
+async def send_balance_update(bot, previous_balance, interval_count, start_time, initial_balance):
     print(f"第 {interval_count} 次更新开始")
     current_balance = get_total_balance()
+    elapsed_time = time.time() - start_time
     difference = float(current_balance - (previous_balance or 0)) if previous_balance is not None else 0
+    total_increase = float(current_balance - initial_balance) if initial_balance is not None else 0
     
-    # 每1分钟、10分钟和60分钟发送消息
-    if interval_count % 60 == 0:  # 每3600秒（60分钟）
-        interval = "60分钟"
-    elif interval_count % 10 == 0:  # 每600秒（10分钟）
-        interval = "10分钟"
-    else:  # 每60秒（1分钟）
-        interval = "1分钟"
+    # 计算每分钟平均增加量（每30秒更新，所以要除以0.5分钟）
+    avg_per_minute = total_increase / (elapsed_time / 60) if elapsed_time > 0 else 0
+    # 24小时预估收益（24小时 = 1440分钟）
+    estimated_24h = avg_per_minute * 1440
     
     message = f"📊 {SYMBOL} 总余额更新 ({time.strftime('%Y-%m-%d %H:%M:%S')}):\n"
     message += f"当前总余额: {current_balance:.4f} {SYMBOL}\n"
-    message += f"{interval}增长: {difference:+.4f} {SYMBOL}"
+    message += f"前一分钟增加: {difference:+.4f} {SYMBOL}\n"
+    message += f"历史总共增加: {total_increase:+.4f} {SYMBOL}\n"
+    message += f"总共运行时间: {format_time(elapsed_time)}\n"
+    message += f"每分钟平均增加: {avg_per_minute:.4f} {SYMBOL}\n"
+    message += f"24小时预估收益: {estimated_24h:+.4f} {SYMBOL}"
     
     print(f"尝试发送消息: {message}")
     try:
@@ -88,12 +98,13 @@ async def main():
     previous_balance = None
     interval_count = 0
     start_time = time.time()
+    initial_balance = get_total_balance()  # 记录初始余额
     
     while True:
         interval_count += 1
-        previous_balance = await send_balance_update(bot, previous_balance, interval_count, start_time)
+        previous_balance = await send_balance_update(bot, previous_balance, interval_count, start_time, initial_balance)
         print(f"等待下一次更新...")
-        await asyncio.sleep(60)  # 每60秒更新一次
+        await asyncio.sleep(30)  # 每30秒更新一次
 
 if __name__ == "__main__":
     asyncio.run(main())
