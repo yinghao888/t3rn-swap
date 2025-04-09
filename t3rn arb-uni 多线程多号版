@@ -15,7 +15,8 @@ logger = logging.getLogger()
 
 # === 可自定义参数 ===
 ACCOUNTS = [
-    {"private_key": "0x123456789abcdef...", "name": "账户1"},
+    {"private_key": "", "name": "账户1"},
+    {"private_key": "", "name": "账户2"}
 ]
 AMOUNT_ETH = 1  # 每次跨链金额（单位：ETH）
 
