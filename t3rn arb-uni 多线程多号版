@@ -5,9 +5,9 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 
 # === ANSI 颜色代码 ===
-BLUE = "\033[94m"  # 蓝色
-RED = "\033[91m"   # 红色
-RESET = "\033[0m"  # 重置颜色
+LIGHT_BLUE = "\033[96m"  # 浅蓝色（柔和的青色）
+LIGHT_RED = "\033[95m"   # 浅红色（淡粉色）
+RESET = "\033[0m"        # 重置颜色
 
 # === 配置日志 ===
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
@@ -15,7 +15,7 @@ logger = logging.getLogger()
 
 # === 可自定义参数 ===
 ACCOUNTS = [
-    {"private_key": "", "name": "账户1"},
+    {"private_key": "0x123456789abcdef...", "name": "账户1"},
 ]
 AMOUNT_ETH = 1  # 每次跨链金额（单位：ETH）
 
@@ -107,7 +107,7 @@ def bridge_uni_to_arb(account_info: Dict) -> bool:
         
         success_count += 1
         total_success_count += 1
-        logger.info(f"{BLUE}{account_info['name']} UNI -> ARB 成功{RESET}")
+        logger.info(f"{LIGHT_BLUE}{account_info['name']} UNI -> ARB 成功{RESET}")
         return True
     except Exception as e:
         logger.error(f"{account_info['name']} UNI -> ARB 失败: {e}")
@@ -144,7 +144,7 @@ def bridge_arb_to_uni(account_info: Dict) -> bool:
         
         success_count += 1
         total_success_count += 1
-        logger.info(f"{RED}{account_info['name']} ARB -> UNI 成功{RESET}")
+        logger.info(f"{LIGHT_RED}{account_info['name']} ARB -> UNI 成功{RESET}")
         return True
     except Exception as e:
         logger.error(f"{account_info['name']} ARB -> UNI 失败: {e}")
