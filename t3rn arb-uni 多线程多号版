@@ -15,8 +15,17 @@ logger = logging.getLogger()
 
 # === 可自定义参数 ===
 ACCOUNTS = [
-    {"private_key": "", "name": "账户1"},
-    {"private_key": "", "name": "账户2"}
+    {"private_key": "", "name": "账户1-1"},
+    {"private_key": "", "name": "账户1-2"},
+    {"private_key": "", "name": "账户1-3"},
+    {"private_key": "", "name": "账户1-4"},
+    {"private_key": "", "name": "账户1-5"},
+    {"private_key": "", "name": "账户1-6"},
+    {"private_key": "", "name": "账户1-7"},
+    {"private_key": "", "name": "账户1-8"},
+    {"private_key": "", "name": "账户1-9"},
+    {"private_key": "", "name": "账户1-10"},
+    {"private_key": "", "name": "账户1-11"}
 ]
 AMOUNT_ETH = 1  # 每次跨链金额（单位：ETH）
 
@@ -24,12 +33,14 @@ AMOUNT_ETH = 1  # 每次跨链金额（单位：ETH）
 ARB_RPC_URLS = [
     "https://arbitrum-sepolia-rpc.publicnode.com",
     "https://sepolia-rollup.arbitrum.io/rpc",
+    "https://arbitrum-sepolia.drpc.org",
 ]
 
 # Unichain Sepolia 测试网 RPC 配置
 UNI_RPC_URLS = [
     "https://unichain-sepolia-rpc.publicnode.com",
     "https://unichain-sepolia.drpc.org",
+    "https://sepolia.unichain.org",
 ]
 
 # 合约地址
@@ -81,6 +92,7 @@ def get_web3_instance(rpc_urls: List[str], chain_id: int) -> Web3:
 GAS_LIMIT_UNI = 200000
 GAS_LIMIT_ARB = 200000
 MIN_GAS_PRICE = Web3.to_wei(0.05, 'gwei')  # 最低 Gas Price
+REQUEST_INTERVAL = 20  # 同一方向请求间隔（秒）
 
 # 全局计数器
 success_count = 0
@@ -106,7 +118,9 @@ for acc in ACCOUNTS:
         "uni_data": UNI_TO_ARB_DATA_TEMPLATE.format(address=address),
         "arb_data": ARB_TO_UNI_DATA_TEMPLATE.format(address=address),
         "uni_pause_until": 0,  # UNI -> ARB 暂停截止时间
-        "arb_pause_until": 0   # ARB -> UNI 暂停截止时间
+        "arb_pause_until": 0,  # ARB -> UNI 暂停截止时间
+        "uni_to_arb_last": 0,  # UNI -> ARB 最近请求时间
+        "arb_to_uni_last": 0   # ARB -> UNI 最近请求时间
     })
 
 # 获取动态 Gas Price
@@ -123,6 +137,10 @@ def get_dynamic_gas_price(w3_instance) -> int:
 def bridge_uni_to_arb(account_info: Dict) -> bool:
     global success_count, total_success_count
     current_time = time.time()
+    
+    # 检查20秒请求间隔
+    if current_time < account_info["uni_to_arb_last"] + REQUEST_INTERVAL:
+        return False
     
     # 检查是否暂停
     if current_time < account_info["uni_pause_until"]:
@@ -158,6 +176,7 @@ def bridge_uni_to_arb(account_info: Dict) -> bool:
         
         success_count += 1
         total_success_count += 1
+        account_info["uni_to_arb_last"] = current_time  # 更新最近请求时间
         logger.info(f"{LIGHT_BLUE}{account_info['name']} UNI -> ARB 成功{RESET}")
         return True
     except Exception as e:
@@ -168,6 +187,10 @@ def bridge_uni_to_arb(account_info: Dict) -> bool:
 def bridge_arb_to_uni(account_info: Dict) -> bool:
     global success_count, total_success_count
     current_time = time.time()
+    
+    # 检查20秒请求间隔
+    if current_time < account_info["arb_to_uni_last"] + REQUEST_INTERVAL:
+        return False
     
     # 检查是否暂停
     if current_time < account_info["arb_pause_until"]:
@@ -203,6 +226,7 @@ def bridge_arb_to_uni(account_info: Dict) -> bool:
         
         success_count += 1
         total_success_count += 1
+        account_info["arb_to_uni_last"] = current_time  # 更新最近请求时间
         logger.info(f"{LIGHT_RED}{account_info['name']} ARB -> UNI 成功{RESET}")
         return True
     except Exception as e:
