@@ -15,17 +15,7 @@ logger = logging.getLogger()
 
 # === 可自定义参数 ===
 ACCOUNTS = [
-    {"private_key": "", "name": "账户1-1"},
-    {"private_key": "", "name": "账户1-2"},
-    {"private_key": "", "name": "账户1-3"},
-    {"private_key": "", "name": "账户1-4"},
-    {"private_key": "", "name": "账户1-5"},
-    {"private_key": "", "name": "账户1-6"},
-    {"private_key": "", "name": "账户1-7"},
-    {"private_key": "", "name": "账户1-8"},
-    {"private_key": "", "name": "账户1-9"},
-    {"private_key": "", "name": "账户1-10"},
-    {"private_key": "", "name": "账户1-11"}
+    {"private_key": "", "name": "账户5-1"},
 ]
 AMOUNT_ETH = 1  # 每次跨链金额（单位：ETH）
 
@@ -92,7 +82,7 @@ def get_web3_instance(rpc_urls: List[str], chain_id: int) -> Web3:
 GAS_LIMIT_UNI = 200000
 GAS_LIMIT_ARB = 200000
 MIN_GAS_PRICE = Web3.to_wei(0.05, 'gwei')  # 最低 Gas Price
-REQUEST_INTERVAL = 20  # 同一方向请求间隔（秒）
+REQUEST_INTERVAL = 1  # 同一方向请求间隔（秒）
 
 # 全局计数器
 success_count = 0
@@ -187,8 +177,6 @@ def bridge_uni_to_arb(account_info: Dict) -> bool:
 def bridge_arb_to_uni(account_info: Dict) -> bool:
     global success_count, total_success_count
     current_time = time.time()
-    
-    # 检查20秒请求间隔
     if current_time < account_info["arb_to_uni_last"] + REQUEST_INTERVAL:
         return False
     
@@ -243,7 +231,7 @@ def process_account(account_info: Dict):
 def main():
     logger.info(f"开始为 {len(accounts)} 个账户执行 UNI-ARB 无限循环跨链，每次 {AMOUNT_ETH} ETH")
     
-    with ThreadPoolExecutor(max_workers=min(len(accounts), 10)) as executor:
+    with ThreadPoolExecutor(max_workers=min(len(accounts), 30)) as executor:
         executor.map(process_account, accounts)
 
 if __name__ == "__main__":
