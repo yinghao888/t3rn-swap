@@ -4,83 +4,39 @@ from web3 import Web3
 from telegram import Bot
 from telegram.ext import Application
 
-# 配置 改这
+# 配置
 TELEGRAM_TOKEN = ""
 CHAT_ID = ""
 
 # 需要查询的账户列表
 ACCOUNTS = [
     "",
-    "",
-    "",
-    "",
-    "",
 ]
 
 # Caldera 配置
 CALDERA_RPC_URL = "https://b2n.rpc.caldera.xyz/http"
-CHAIN_ID = 334
-EXPLORER_URL = "https://b2n.explorer.caldera.xyz"
 SYMBOL = "BRN"
-# Arbitrum 测试网配置
-ARB_RPC_URL = "https://arbitrum-sepolia-rpc.publicnode.com"  # Arbitrum Sepolia Testnet
-# Unichain 测试网配置
-UNI_RPC_URL = "https://unichain-sepolia-rpc.publicnode.com"  # Unichain Sepolia Testnet
 
-# 连接到各个区块链
+# 连接到 Caldera 区块链
 print("尝试连接到 Caldera 区块链...")
 caldera_w3 = Web3(Web3.HTTPProvider(CALDERA_RPC_URL))
 if not caldera_w3.is_connected():
     raise Exception("无法连接到 Caldera 区块链 RPC")
 print("Caldera 区块链连接成功")
 
-print("尝试连接到 Arbitrum 测试网...")
-arb_w3 = Web3(Web3.HTTPProvider(ARB_RPC_URL))
-if not arb_w3.is_connected():
-    raise Exception("无法连接到 Arbitrum 测试网 RPC")
-print("Arbitrum 测试网连接成功")
-
-print("尝试连接到 Unichain 测试网...")
-uni_w3 = Web3(Web3.HTTPProvider(UNI_RPC_URL))
-if not uni_w3.is_connected():
-    raise Exception("无法连接到 Unichain 测试网 RPC")
-print("Unichain 测试网连接成功")
-
-# 查询各个网络的总余额
+# 查询 Caldera 网络总余额
 def get_caldera_balance():
     total_balance = 0
     for account in ACCOUNTS:
         try:
-            balance_wei = caldera_w3.eth.get_balance(account)
+            # 转换为校验和地址以避免 EIP-55 错误
+            checksum_address = caldera_w3.to_checksum_address(account)
+            balance_wei = caldera_w3.eth.get_balance(checksum_address)
             balance = caldera_w3.from_wei(balance_wei, 'ether')
             total_balance += balance
         except Exception as e:
             print(f"查询 Caldera 账户 {account} 失败: {str(e)}")
     print(f"当前 Caldera 总余额: {total_balance}")
-    return total_balance
-
-def get_arb_balance():
-    total_balance = 0
-    for account in ACCOUNTS:
-        try:
-            balance_wei = arb_w3.eth.get_balance(account)
-            balance = arb_w3.from_wei(balance_wei, 'ether')
-            total_balance += balance
-        except Exception as e:
-            print(f"查询 Arbitrum 账户 {account} 失败: {str(e)}")
-    print(f"当前 Arbitrum 总余额: {total_balance}")
-    return total_balance
-
-def get_uni_balance():
-    total_balance = 0
-    for account in ACCOUNTS:
-        try:
-            balance_wei = uni_w3.eth.get_balance(account)
-            balance = uni_w3.from_wei(balance_wei, 'ether')
-            total_balance += balance
-        except Exception as e:
-            print(f"查询 Unichain 账户 {account} 失败: {str(e)}")
-    print(f"当前 Unichain 总余额: {total_balance}")
     return total_balance
 
 # 格式化时间
@@ -94,9 +50,6 @@ def format_time(seconds):
 async def send_balance_update(bot, previous_caldera_balance, interval_count, start_time, initial_caldera_balance):
     print(f"第 {interval_count} 次更新开始")
     caldera_balance = get_caldera_balance()
-    arb_balance = get_arb_balance()
-    uni_balance = get_uni_balance()
-    total_eth_balance = arb_balance + uni_balance  # 计算 ETH 总余额
     elapsed_time = time.time() - start_time
     difference = float(caldera_balance - (previous_caldera_balance or 0)) if previous_caldera_balance is not None else 0
     total_increase = float(caldera_balance - initial_caldera_balance) if initial_caldera_balance is not None else 0
@@ -110,10 +63,7 @@ async def send_balance_update(bot, previous_caldera_balance, interval_count, sta
     message += f"前1分钟增加: {difference:+.4f} {SYMBOL}\n"
     message += f"历史总共增加: {total_increase:+.4f} {SYMBOL}\n"
     message += f"总共运行时间: {format_time(elapsed_time)}\n"
-    message += f"24小时预估收益: {estimated_24h:+.4f} {SYMBOL}\n"
-    message += f"Arb ETH 余额: {arb_balance:.4f} ETH\n"
-    message += f"Uni ETH 余额: {uni_balance:.4f} ETH\n"
-    message += f"ETH 总余额: {total_eth_balance:.4f} ETH"
+    message += f"24小时预估收益: {estimated_24h:+.4f} {SYMBOL}"
     
     print(f"尝试发送消息: {message}")
     try:
