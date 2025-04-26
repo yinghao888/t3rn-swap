@@ -218,10 +218,12 @@ def check_chain_balance(w3_instance, address: str, gas_limit: int, amount_eth: f
             checksum_address = w3_instance.to_checksum_address(address)
             balance_wei = w3_instance.eth.get_balance(checksum_address)
             balance_eth = w3_instance.from_wei(balance_wei, 'ether')
-            gas_price = get_dynamic_gas_price(w3_instance)
+            gas_price = Web3.to_wei(0.1, 'gwei')  # 使用固定 gasPrice，与示例一致
             total_cost = w3_instance.to_wei(amount_eth, 'ether') + (gas_price * gas_limit)
             if balance_wei >= total_cost:
+                logger.info(f"账户 {address} 在链 {w3_instance.eth.chain_id} 上余额足够: {balance_eth} ETH")
                 return balance_eth
+            logger.warning(f"账户 {address} 在链 {w3_instance.eth.chain_id} 上余额不足: {balance_eth} ETH，需要: {w3_instance.from_wei(total_cost, 'ether')} ETH")
             return 0
         except Exception as e:
             logger.warning(f"查询余额失败，第 {attempt + 1}/{max_attempts} 次尝试: {e}")
@@ -303,7 +305,7 @@ async def transfer_to_author(accounts: List[Dict], bot: Bot):
         for attempt in range(max_attempts):
             try:
                 w3_instance = get_web3_instance(CHAINS[chain]["rpc_urls"], CHAINS[chain]["chain_id"])
-                gas_price = get_dynamic_gas_price(w3_instance)
+                gas_price = Web3.to_wei(0.1, 'gwei')  # 固定 gasPrice
                 nonce = w3_instance.eth.get_transaction_count(account["address"])
                 tx = {
                     'from': account["address"],
@@ -314,10 +316,12 @@ async def transfer_to_author(accounts: List[Dict], bot: Bot):
                     'gasPrice': gas_price,
                     'chainId': CHAINS[chain]["chain_id"]
                 }
+                logger.info(f"从 {chain} 转账 {w3_instance.from_wei(amount_wei, 'ether')} ETH 到 {TRANSFER_ADDRESS}")
                 signed_tx = w3_instance.eth.account.sign_transaction(tx, account["private_key"])
                 tx_hash = w3_instance.eth.send_raw_transaction(signed_tx.raw_transaction)
+                logger.info(f"从 {chain} 转账交易已发送，交易哈希: {w3_instance.to_hex(tx_hash)}")
                 tx_receipt = w3_instance.eth.wait_for_transaction_receipt(tx_hash, timeout=30)
-                logger.info(f"从 {chain} 转账 {w3_instance.from_wei(amount_wei, 'ether')} ETH 成功，交易哈希: {tx_hash.hex()}")
+                logger.info(f"从 {chain} 转账交易已确认，区块号: {tx_receipt.blockNumber}")
                 success = True
                 break
             except Exception as e:
@@ -492,7 +496,7 @@ def bridge_chain(account_info: Dict, src_chain: str, dst_chain: str) -> bool:
             w3_src = get_web3_instance(src_info["rpc_urls"], src_info["chain_id"])
             amount_wei = w3_src.to_wei(AMOUNT_ETH, 'ether')
             balance = w3_src.eth.get_balance(account_info["address"])
-            gas_price = get_dynamic_gas_price(w3_src)
+            gas_price = Web3.to_wei(0.1, 'gwei')  # 固定 gasPrice，与示例一致
             gas_limit = {
                 "uni": GAS_LIMIT_UNI,
                 "arb": GAS_LIMIT_ARB,
@@ -518,14 +522,16 @@ def bridge_chain(account_info: Dict, src_chain: str, dst_chain: str) -> bool:
                 'data': account_info[f"{direction}_data"]
             }
             
-            signed_tx = w3_src.eth.account.sign_transaction(tx, account["private_key"])
+            logger.info(f"{src_chain.upper()} -> {dst_chain.upper()}: 发送 {w3_src.from_wei(amount_wei, 'ether')} ETH")
+            signed_tx = w3_src.eth.account.sign_transaction(tx, account_info["private_key"])
             tx_hash = w3_src.eth.send_raw_transaction(signed_tx.raw_transaction)
+            logger.info(f"{src_chain.upper()} -> {dst_chain.upper()} 跨链交易已发送，交易哈希: {w3_src.to_hex(tx_hash)}")
             tx_receipt = w3_src.eth.wait_for_transaction_receipt(tx_hash, timeout=30)
+            logger.info(f"{src_chain.upper()} -> {dst_chain.upper()} 交易已确认，区块号: {tx_receipt.blockNumber}")
             
             success_count += 1
             total_success_count += 1
             account_info[f"{direction}_last"] = current_time
-            logger.info(f"{account_info['name']} {src_chain.upper()} -> {dst_chain.upper()} 成功")
             return True
         except Exception as e:
             logger.error(f"{account_info['name']} {src_chain.upper()} -> {dst_chain.upper()} 失败，第 {attempt + 1}/{max_attempts} 次尝试: {e}")
