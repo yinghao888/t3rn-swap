@@ -65,56 +65,25 @@ if ! command -v pm2 &> /dev/null; then
     fi
 fi
 
-# 下载 setup.py 和 cross_chain.py 脚本
-echo "下载 setup.py 脚本..."
-wget -O setup.py https://raw.githubusercontent.com/yinghao888/t3rn-swap/main/setup.py
+# 下载 menu.py 和 worker.py 脚本
+echo "下载 menu.py 脚本..."
+wget -O menu.py https://raw.githubusercontent.com/yinghao888/t3rn-swap/main/menu.py
 if [[ $? -ne 0 ]]; then
-    echo "下载 setup.py 失败，请检查网络或仓库地址"
+    echo "下载 menu.py 失败，请检查网络或仓库地址"
     exit 1
 fi
 
-echo "下载 cross_chain.py 脚本..."
-wget -O cross_chain.py https://raw.githubusercontent.com/yinghao888/t3rn-swap/main/cross_chain.py
+echo "下载 worker.py 脚本..."
+wget -O worker.py https://raw.githubusercontent.com/yinghao888/t3rn-swap/main/worker.py
 if [[ $? -ne 0 ]]; then
-    echo "下载 cross_chain.py 失败，请检查网络或仓库地址"
+    echo "下载 worker.py 失败，请检查网络或仓库地址"
     exit 1
 fi
 
-sed -i 's/\r//' setup.py
-sed -i 's/\r//' cross_chain.py
-chmod +x setup.py cross_chain.py
+sed -i 's/\r//' menu.py
+sed -i 's/\r//' worker.py
+chmod +x menu.py worker.py
 
-# 运行 setup.py 收集用户输入
-echo "运行 setup.py 收集用户输入..."
-python3 setup.py
-if [[ $? -ne 0 ]]; then
-    echo "setup.py 运行失败，请检查输入或脚本"
-    exit 1
-fi
-
-# 检查是否已有 cross-chain 进程运行
-echo "检查 pm2 进程状态..."
-pm2 pid cross-chain >/dev/null
-if [[ $? -eq 0 ]]; then
-    echo "cross-chain 进程已存在，重新启动..."
-    pm2 restart cross-chain
-else
-    # 使用 pm2 启动 cross_chain.py
-    echo "使用 pm2 启动跨链脚本..."
-    pm2 start cross_chain.py --name cross-chain --interpreter python3
-    if [[ $? -ne 0 ]]; then
-        echo "pm2 启动脚本失败，请检查 pm2 状态"
-        exit 1
-    fi
-fi
-
-# 保存 pm2 进程列表并设置开机自启
-pm2 save
-pm2 startup
-
-echo "跨链脚本已通过 pm2 启动，进程名称为 cross-chain"
-echo "你可以使用以下命令管理脚本："
-echo "  查看状态：pm2 status"
-echo "  查看日志：pm2 logs cross-chain"
-echo "  停止脚本：pm2 stop cross-chain"
-echo "  重启脚本：pm2 restart cross-chain"
+# 运行 menu.py 进行交互
+echo "运行 menu.py 进行交互..."
+python3 menu.py
