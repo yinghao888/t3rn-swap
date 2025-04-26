@@ -1,5 +1,6 @@
 import subprocess
 import sys
+import os
 
 # === 收集用户输入并保存到 config.txt ===
 def get_user_input():
@@ -39,31 +40,90 @@ def display_banner():
     banner = """
     ╔════════════════════════════════════════════════════════════════════╗
     ║                                                                    ║
-    ║   🚀 由 @hao3313076 一天一夜没睡匠心制作！🚀                           ║
-    ║   💥 不关注我的推特 @hao3313076，JJ短10cm！💥                         ║
-    ║   📢 快去 Twitter 关注我，获取最新跨链动态和福利！📢                     ║
+    ║   🚀 由 @hao3313076 一天一夜没睡匠心制作！🚀                    ║
+    ║   💥 不关注我的推特 @hao3313076，JJ短10cm！💥                  ║
+    ║   📢 快去 Twitter 关注我，获取最新跨链动态和福利！📢           ║
     ║                                                                    ║
     ╚════════════════════════════════════════════════════════════════════╝
     """
     print(banner)
 
+# === 隐藏私钥显示 ===
+def mask_private_key(key):
+    if len(key) < 12:
+        return key
+    return f"{key[:6]}****{key[-6:]}"
+
+# === 账户管理 ===
+def manage_accounts(private_keys_input, chat_id):
+    private_keys = private_keys_input.split("+")
+    while True:
+        print("\n账户管理：")
+        print("1. 添加私钥")
+        print("2. 删除私钥")
+        print("3. 查看私钥列表")
+        print("4. 返回主菜单")
+        choice = input("输入选项（1-4）: ").strip()
+        
+        if choice == "1":
+            new_key = input("请输入新私钥: ").strip()
+            if new_key:
+                private_keys.append(new_key)
+                private_keys_input = "+".join(private_keys)
+                save_config(private_keys_input, chat_id)
+                print("私钥已添加")
+            else:
+                print("私钥不能为空")
+        elif choice == "2":
+            if not private_keys:
+                print("当前没有私钥")
+                continue
+            print("\n当前私钥列表：")
+            for idx, key in enumerate(private_keys, 1):
+                print(f"{idx}. {mask_private_key(key)}")
+            try:
+                idx = int(input("请输入要删除的私钥编号: ")) - 1
+                if 0 <= idx < len(private_keys):
+                    deleted_key = private_keys.pop(idx)
+                    private_keys_input = "+".join(private_keys) if private_keys else ""
+                    save_config(private_keys_input, chat_id)
+                    print(f"私钥 {mask_private_key(deleted_key)} 已删除")
+                else:
+                    print("无效的编号")
+            except ValueError:
+                print("请输入有效的数字")
+        elif choice == "3":
+            if not private_keys:
+                print("当前没有私钥")
+            else:
+                print("\n当前私钥列表：")
+                for idx, key in enumerate(private_keys, 1):
+                    print(f"{idx}. {mask_private_key(key)}")
+        elif choice == "4":
+            break
+        else:
+            print("无效选项，请输入 1-4")
+        print("按 Enter 继续...")
+        input()
+
 # === 显示菜单并获取用户选择 ===
 def get_mode_and_directions():
     print("\n请选择操作：")
-    print("1. 沙雕模式（自动根据余额选择跨链方向）")
-    print("2. 普通模式（手动选择跨链方向）")
-    print("3. 查看日志")
-    print("4. 暂停运行")
-    print("5. 删除脚本")
-    print("6. 请作者喝杯瑞幸咖啡（自动转账 10 ETH）")
-    choice = input("输入选项（1-6）: ").strip()
+    print("1. 账户管理")
+    print("2. 沙雕模式（自动根据余额选择跨链方向）")
+    print("3. 普通模式（手动选择跨链方向）")
+    print("4. 查看日志")
+    print("5. 暂停运行")
+    print("6. 删除脚本")
+    print("7. 请作者喝杯瑞幸咖啡（自动转账 10 ETH）")
+    choice = input("输入选项（1-7）: ").strip()
     
-    if choice not in ["1", "2", "3", "4", "5", "6"]:
-        print("无效选项，请输入 1-6")
+    if choice not in ["1", "2", "3", "4", "5", "6", "7"]:
+        print("无效选项，请输入 1-7")
         return None, None
     
     selected_directions = []
-    if choice == "2":
+    if choice == "3":
         print("\n可用跨链方向：")
         for idx, desc in enumerate([
             "UNI -> ARB", "UNI -> OP", "UNI -> Base",
@@ -105,9 +165,9 @@ def view_pm2_logs():
 def start_worker(mode, directions=""):
     stop_pm2_process()  # 先停止现有进程
     cmd = ["pm2", "start", "worker.py", "--name", "cross-chain", "--interpreter", "python3"]
-    if mode == "1":
+    if mode == "2":
         cmd.extend(["--", "silly"])
-    elif mode == "2":
+    elif mode == "3":
         cmd.extend(["--", "normal", directions])
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode == 0:
@@ -136,19 +196,23 @@ def main():
     # 菜单循环
     while True:
         choice, directions = get_mode_and_directions()
-        if choice in ["1", "2"]:
+        if choice == "1":
+            manage_accounts(private_keys_input, chat_id)
+            config = load_config()
+            private_keys_input, chat_id = config["PRIVATE_KEYS"], config["CHAT_ID"]
+        elif choice in ["2", "3"]:
             save_config(private_keys_input, chat_id, f"{choice}:{directions}")
             start_worker(choice, directions)
             print("按 Enter 返回菜单...")
             input()
-        elif choice == "3":
+        elif choice == "4":
             if check_pm2_process():
                 view_pm2_logs()
             else:
                 print("cross-chain 进程未运行，无法查看日志")
             print("按 Enter 返回菜单...")
             input()
-        elif choice == "4":
+        elif choice == "5":
             if check_pm2_process():
                 subprocess.run(["pm2", "stop", "cross-chain"])
                 print("脚本已暂停")
@@ -160,7 +224,7 @@ def main():
                 subprocess.run(["pm2", "restart", "cross-chain"])
             else:
                 print("请重新选择模式以启动脚本")
-        elif choice == "5":
+        elif choice == "6":
             print("正在删除脚本...")
             if check_pm2_process():
                 subprocess.run(["pm2", "delete", "cross-chain"])
@@ -174,9 +238,11 @@ def main():
                 print(f"删除脚本失败: {e}")
                 print("请手动删除文件")
                 sys.exit(1)
-        elif choice == "6":
+        elif choice == "7":
             print("正在处理转账，请稍候...")
             continue
+        print("按 Enter 返回菜单...")
+        input()
 
 if __name__ == "__main__":
     main()
