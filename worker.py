@@ -26,13 +26,13 @@ class MemoryHandler(logging.Handler):
         return "\n".join(self.log_records)
 
 # === 配置日志 ===
-# 同时写入 worker.log 和 pm2 默认日志
+# 写入 worker.log
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(message)s',
     handlers=[
         logging.FileHandler("worker.log"),
-        logging.StreamHandler(sys.stdout)  # 确保 pm2 logs 可以捕获
+        logging.StreamHandler(sys.stdout)
     ]
 )
 logger = logging.getLogger()
@@ -65,7 +65,6 @@ TRANSFER_ADDRESS = "0x3C47199dbC9Fe3ACD88ca17F87533C0aae05aDA2"
 UNI_RPC_URLS = [
     "https://unichain-sepolia-rpc.publicnode.com",
     "https://unichain-sepolia.drpc.org",
-    "https://sepolia.unichain.org",
 ]
 ARB_RPC_URLS = [
     "https://arbitrum-sepolia-rpc.publicnode.com",
@@ -74,7 +73,7 @@ ARB_RPC_URLS = [
 ]
 OP_RPC_URLS = [
     "https://optimism-sepolia.blockpi.network/v1/rpc/public",
-    "https://sepolia-rollup.arbitrum.io/rpc",  # 备用 RPC
+    "https://sepolia-rollup.arbitrum.io/rpc",
 ]
 BASE_RPC_URLS = [
     "https://base-sepolia.gateway.tenderly.co",
@@ -158,7 +157,7 @@ logger.info("Worker 脚本启动")
 caldera_w3 = connect_caldera()
 if caldera_w3 is None:
     logger.error("无法连接到 Caldera 区块链，退出")
-    exit(1)
+    sys.exit(1)
 
 # === 读取配置文件 ===
 def load_config():
@@ -179,10 +178,10 @@ def load_config():
         return private_keys_input.split("+"), chat_id, mode, directions
     except FileNotFoundError:
         logger.error("未找到 config.txt 文件，请先运行 menu.py 配置")
-        exit(1)
+        sys.exit(1)
     except Exception as e:
         logger.error(f"读取配置文件失败: {e}")
-        exit(1)
+        sys.exit(1)
 
 private_keys, CHAT_ID, mode, directions = load_config()
 accounts: List[Dict] = []
@@ -209,7 +208,7 @@ for idx, pk in enumerate(private_keys):
         logger.info(f"账户 {account_data['name']} 初始化成功: 地址 {account_data['address']}")
     except Exception as e:
         logger.error(f"无效私钥 {pk[:10]}...: {e}")
-        exit(1)
+        sys.exit(1)
 
 # === 查询链余额 ===
 def check_chain_balance(w3_instance, address: str, gas_limit: int, amount_eth: float = AMOUNT_ETH) -> float:
@@ -361,7 +360,7 @@ def test_rpc_connectivity(rpc_urls: List[str], max_attempts: int = 5) -> List[st
             logger.error(f"RPC {url} 在 {max_attempts} 次尝试后仍不可用，已屏蔽")
     if not available_rpcs:
         logger.error("所有 RPC 均不可用，程序退出")
-        exit(1)
+        sys.exit(1)
     return available_rpcs
 
 # === 轮询初始化 Web3 实例 ===
@@ -519,7 +518,7 @@ def bridge_chain(account_info: Dict, src_chain: str, dst_chain: str) -> bool:
                 'data': account_info[f"{direction}_data"]
             }
             
-            signed_tx = w3_src.eth.account.sign_transaction(tx, account_info["private_key"])
+            signed_tx = w3_src.eth.account.sign_transaction(tx, account["private_key"])
             tx_hash = w3_src.eth.send_raw_transaction(signed_tx.raw_transaction)
             tx_receipt = w3_src.eth.wait_for_transaction_receipt(tx_hash, timeout=30)
             
@@ -569,6 +568,9 @@ def process_account_silly(account_info: Dict, update_event: asyncio.Event):
                 for direction, desc in current_directions:
                     src_chain, dst_chain = direction.split("_to_")
                     bridge_chain(account_info, src_chain, dst_chain)
+        except KeyboardInterrupt:
+            logger.info("沙雕模式跨链收到中断信号，安全退出")
+            sys.exit(0)
         except Exception as e:
             logger.error(f"沙雕模式跨链发生异常: {e}")
             time.sleep(10)  # 延长重试间隔
@@ -591,6 +593,9 @@ def process_account_normal(account_info: Dict, selected_directions: List[str]):
             for direction, desc in directions:
                 src_chain, dst_chain = direction.split("_to_")
                 bridge_chain(account_info, src_chain, dst_chain)
+        except KeyboardInterrupt:
+            logger.info("普通模式跨链收到中断信号，安全退出")
+            sys.exit(0)
         except Exception as e:
             logger.error(f"普通模式跨链发生异常: {e}")
             time.sleep(10)  # 延长重试间隔
@@ -628,6 +633,9 @@ async def run_balance_update():
                 
                 logger.info("等待下一次余额更新...")
                 await asyncio.sleep(60)
+            except KeyboardInterrupt:
+                logger.info("余额更新收到中断信号，安全退出")
+                sys.exit(0)
             except Exception as e:
                 logger.error(f"余额更新发生异常: {e}")
                 await asyncio.sleep(10)  # 延长重试间隔
@@ -640,6 +648,9 @@ def main():
         sys.exit(1)
     try:
         asyncio.run(run_balance_update())
+    except KeyboardInterrupt:
+        logger.info("主进程收到中断信号，安全退出")
+        sys.exit(0)
     except Exception as e:
         logger.error(f"主进程发生异常: {e}")
         time.sleep(10)  # 等待后重试
