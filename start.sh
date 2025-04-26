@@ -44,23 +44,13 @@ if [[ $? -ne 0 ]]; then
     exit 1
 fi
 
-# 检查 Node.js 和 npm
-if ! command -v node &> /dev/null || ! command -v npm &> /dev/null; then
-    echo "未找到 Node.js 或 npm，尝试安装..."
+# 检查 screen
+if ! command -v screen &> /dev/null; then
+    echo "未找到 screen，尝试安装..."
     sudo apt-get update
-    sudo apt-get install -y nodejs npm
+    sudo apt-get install -y screen
     if [[ $? -ne 0 ]]; then
-        echo "Node.js 和 npm 安装失败，请手动安装"
-        exit 1
-    fi
-fi
-
-# 检查 pm2
-if ! command -v pm2 &> /dev/null; then
-    echo "未找到 pm2，尝试安装..."
-    sudo npm install -g pm2
-    if [[ $? -ne 0 ]]; then
-        echo "pm2 安装失败，请手动安装"
+        echo "screen 安装失败，请手动安装"
         exit 1
     fi
 fi
