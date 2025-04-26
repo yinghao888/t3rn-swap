@@ -536,9 +536,9 @@ async def run_balance_update():
     loop = asyncio.get_event_loop()
     
     with ThreadPoolExecutor(max_workers=min(len(accounts), 30)) as executor:
-        if mode == "1":
+        if mode == "2":
             loop.run_in_executor(executor, lambda: [process_account_silly(account, update_event) for account in accounts])
-        elif mode == "2":
+        elif mode == "3":
             loop.run_in_executor(executor, lambda: [process_account_normal(account, directions.split(",")) for account in accounts])
         
         while True:
@@ -547,7 +547,7 @@ async def run_balance_update():
                 bot, previous_caldera_balance, interval_count, start_time, initial_caldera_balance, account_addresses
             )
             
-            if mode == "1" and interval_count % 5 == 0:
+            if mode == "2" and interval_count % 5 == 0:
                 update_event.set()
             
             logger.info("等待下一次余额更新...")
@@ -556,7 +556,7 @@ async def run_balance_update():
 # === 主函数 ===
 def main():
     logger.info(f"加载了 {len(accounts)} 个账户，准备执行跨链和 B2N 余额查询")
-    if mode not in ["1", "2"]:
+    if mode not in ["2", "3"]:
         logger.error("无效的模式，请通过 menu.py 重新选择")
         sys.exit(1)
     asyncio.run(run_balance_update())
