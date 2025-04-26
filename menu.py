@@ -1,6 +1,11 @@
 import subprocess
 import sys
 import os
+import platform
+
+# === 清屏函数 ===
+def clear_screen():
+    os.system("cls" if platform.system() == "Windows" else "clear")
 
 # === 收集用户输入并保存到 config.txt ===
 def get_user_input():
@@ -58,6 +63,8 @@ def mask_private_key(key):
 def manage_accounts(private_keys_input, chat_id):
     private_keys = private_keys_input.split("+")
     while True:
+        clear_screen()
+        display_banner()
         print("\n账户管理：")
         print("1. 添加私钥")
         print("2. 删除私钥")
@@ -77,21 +84,21 @@ def manage_accounts(private_keys_input, chat_id):
         elif choice == "2":
             if not private_keys:
                 print("当前没有私钥")
-                continue
-            print("\n当前私钥列表：")
-            for idx, key in enumerate(private_keys, 1):
-                print(f"{idx}. {mask_private_key(key)}")
-            try:
-                idx = int(input("请输入要删除的私钥编号: ")) - 1
-                if 0 <= idx < len(private_keys):
-                    deleted_key = private_keys.pop(idx)
-                    private_keys_input = "+".join(private_keys) if private_keys else ""
-                    save_config(private_keys_input, chat_id)
-                    print(f"私钥 {mask_private_key(deleted_key)} 已删除")
-                else:
-                    print("无效的编号")
-            except ValueError:
-                print("请输入有效的数字")
+            else:
+                print("\n当前私钥列表：")
+                for idx, key in enumerate(private_keys, 1):
+                    print(f"{idx}. {mask_private_key(key)}")
+                try:
+                    idx = int(input("请输入要删除的私钥编号: ")) - 1
+                    if 0 <= idx < len(private_keys):
+                        deleted_key = private_keys.pop(idx)
+                        private_keys_input = "+".join(private_keys) if private_keys else ""
+                        save_config(private_keys_input, chat_id)
+                        print(f"私钥 {mask_private_key(deleted_key)} 已删除")
+                    else:
+                        print("无效的编号")
+                except ValueError:
+                    print("请输入有效的数字")
         elif choice == "3":
             if not private_keys:
                 print("当前没有私钥")
@@ -108,6 +115,8 @@ def manage_accounts(private_keys_input, chat_id):
 
 # === 显示菜单并获取用户选择 ===
 def get_mode_and_directions():
+    clear_screen()
+    display_banner()
     print("\n请选择操作：")
     print("1. 账户管理")
     print("2. 沙雕模式（自动根据余额选择跨链方向）")
@@ -150,8 +159,8 @@ def get_mode_and_directions():
 
 # === 检查 pm2 进程状态 ===
 def check_pm2_process():
-    result = subprocess.run(["pm2", "pid", "cross-chain"], capture_output=True, text=True)
-    return result.returncode == 0 and int(result.stdout.strip()) > 0
+    result = subprocess.run(["pm2", "list"], capture_output=True, text=True)
+    return "cross-chain" in result.stdout and "online" in result.stdout
 
 # === 停止 pm2 进程 ===
 def stop_pm2_process():
@@ -183,11 +192,10 @@ def start_worker(mode, directions=""):
 
 # === 主函数 ===
 def main():
-    display_banner()
-    
     # 收集用户输入并保存
     config = load_config()
     if not config:
+        display_banner()
         private_keys_input, chat_id = get_user_input()
         save_config(private_keys_input, chat_id)
     else:
@@ -241,8 +249,7 @@ def main():
         elif choice == "7":
             print("正在处理转账，请稍候...")
             continue
-        print("按 Enter 返回菜单...")
-        input()
+        clear_screen()
 
 if __name__ == "__main__":
     main()
