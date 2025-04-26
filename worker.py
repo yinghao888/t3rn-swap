@@ -139,9 +139,12 @@ def load_config():
                 config[key] = value
         private_keys_input = config.get("PRIVATE_KEYS")
         chat_id = config.get("CHAT_ID")
+        mode_info = config.get("MODE", "")
         if not private_keys_input or not chat_id:
             raise ValueError("配置文件缺失必要字段")
-        return private_keys_input.split("+"), chat_id
+        mode = mode_info.split(":")[0] if mode_info else ""
+        directions = mode_info.split(":")[1] if ":" in mode_info else ""
+        return private_keys_input.split("+"), chat_id, mode, directions
     except FileNotFoundError:
         logger.error("未找到 config.txt 文件，请先运行 setup.py 配置")
         exit(1)
@@ -150,7 +153,7 @@ def load_config():
         exit(1)
 
 # === 账户初始化 ===
-private_keys, CHAT_ID = load_config()
+private_keys, CHAT_ID, mode, directions = load_config()
 accounts: List[Dict] = []
 account_addresses = []
 for idx, pk in enumerate(private_keys):
@@ -475,7 +478,8 @@ def get_color(chain: str) -> str:
     }[chain]
 
 # === 并行执行跨链（沙雕模式） ===
-def process_account_silly(account_info: Dict, available_directions: List[tuple], update_event: asyncio.Event):
+def process_account_silly(account_info: Dict, update_event: asyncio.Event):
+    available_directions = asyncio.run(get_available_directions(accounts, w3_instances))
     while True:
         if is_paused:
             time.sleep(1)
@@ -485,6 +489,7 @@ def process_account_silly(account_info: Dict, available_directions: List[tuple],
         
         if update_event.is_set():
             logger.info(f"{account_info['name']} 检测到余额更新，重新获取可用方向")
+            available_directions = asyncio.run(get_available_directions(accounts, w3_instances))
             update_event.clear()
         
         current_directions = available_directions
@@ -498,7 +503,12 @@ def process_account_silly(account_info: Dict, available_directions: List[tuple],
             bridge_chain(account_info, src_chain, dst_chain)
 
 # === 并行执行跨链（普通模式） ===
-def process_account_normal(account_info: Dict, selected_directions: List[tuple]):
+def process_account_normal(account_info: Dict, selected_directions: List[str]):
+    directions = []
+    for idx, (direction, desc) in enumerate(CROSS_CHAIN_DIRECTIONS):
+        if str(idx + 1) in selected_directions:
+            directions.append((direction, desc))
+    
     while True:
         if is_paused:
             time.sleep(1)
@@ -506,99 +516,30 @@ def process_account_normal(account_info: Dict, selected_directions: List[tuple])
         
         logger.info(f"{account_info['name']} 开始普通模式跨链")
         
-        for direction, desc in selected_directions:
+        for direction, desc in directions:
             src_chain, dst_chain = direction.split("_to_")
             bridge_chain(account_info, src_chain, dst_chain)
 
-# === 显示菜单并获取模式 ===
-def get_mode_and_directions():
-    while True:
-        print("\n请选择操作：")
-        print("1. 沙雕模式（自动根据余额选择跨链方向）")
-        print("2. 普通模式（手动选择跨链方向）")
-        print("3. 查看日志")
-        print("4. 暂停运行")
-        print("5. 删除脚本")
-        print("6. 请作者喝杯瑞幸咖啡（自动转账 10 ETH）")
-        choice = input("输入选项（1-6）: ").strip()
-        
-        if choice not in ["1", "2", "3", "4", "5", "6"]:
-            print("无效选项，请输入 1-6")
-            continue
-        
-        if choice == "3":
-            print("\n=== 日志记录 ===")
-            print(memory_handler.get_logs() or "暂无日志")
-            continue
-        elif choice == "4":
-            global is_paused
-            is_paused = True
-            print("脚本已暂停，按 Enter 继续...")
-            input()
-            is_paused = False
-            continue
-        elif choice == "5":
-            print("正在删除脚本...")
-            try:
-                os.remove(__file__)
-                print("脚本已删除，程序退出")
-                sys.exit(0)
-            except Exception as e:
-                logger.error(f"删除脚本失败: {e}")
-                print("删除脚本失败，请手动删除")
-                continue
-        elif choice == "6":
-            # 自动转账
-            asyncio.run(transfer_to_author(accounts, bot))
-            continue
-        
-        selected_directions = CROSS_CHAIN_DIRECTIONS
-        if choice == "2":
-            print("\n可用跨链方向：")
-            for idx, (_, desc) in enumerate(CROSS_CHAIN_DIRECTIONS, 1):
-                print(f"{idx}. {desc}")
-            choices = input("请输入跨链方向编号（逗号分隔，例如 1,2,5）: ").strip()
-            if not choices:
-                print("未选择任何跨链方向")
-                continue
-            try:
-                selected_indices = [int(x) - 1 for x in choices.split(",")]
-                selected_directions = [CROSS_CHAIN_DIRECTIONS[i] for i in selected_indices if 0 <= i < len(CROSS_CHAIN_DIRECTIONS)]
-                if not selected_directions:
-                    print("无效的跨链方向选择")
-                    continue
-            except ValueError:
-                print("跨链方向编号必须为数字")
-                continue
-        
-        return choice, selected_directions
-
-# === 异步运行跨链和余额查询 ===
-async def run_cross_chain_and_balance():
-    global available_directions, bot
+# === 异步运行余额查询 ===
+async def run_balance_update():
     logger.info("启动 Telegram Bot...")
     bot = Bot(TELEGRAM_TOKEN)
     app = Application.builder().token(TELEGRAM_TOKEN).build()
     logger.info("Bot 初始化完成")
 
-    mode, selected_directions = get_mode_and_directions()
-    
     previous_caldera_balance = None
     interval_count = 0
     start_time = time.time()
     initial_caldera_balance = get_caldera_balance(account_addresses)
     
-    available_directions = selected_directions
     update_event = asyncio.Event()
-    if mode == "1":
-        available_directions = await get_available_directions(accounts, w3_instances)
-    
     loop = asyncio.get_event_loop()
+    
     with ThreadPoolExecutor(max_workers=min(len(accounts), 30)) as executor:
         if mode == "1":
-            loop.run_in_executor(executor, lambda: [process_account_silly(account, available_directions, update_event) for account in accounts])
-        else:
-            loop.run_in_executor(executor, lambda: [process_account_normal(account, selected_directions) for account in accounts])
+            loop.run_in_executor(executor, lambda: [process_account_silly(account, update_event) for account in accounts])
+        elif mode == "2":
+            loop.run_in_executor(executor, lambda: [process_account_normal(account, directions.split(",")) for account in accounts])
         
         while True:
             interval_count += 1
@@ -607,7 +548,6 @@ async def run_cross_chain_and_balance():
             )
             
             if mode == "1" and interval_count % 5 == 0:
-                available_directions = await get_available_directions(accounts, w3_instances)
                 update_event.set()
             
             logger.info("等待下一次余额更新...")
@@ -616,7 +556,16 @@ async def run_cross_chain_and_balance():
 # === 主函数 ===
 def main():
     logger.info(f"加载了 {len(accounts)} 个账户，准备执行跨链和 B2N 余额查询")
-    asyncio.run(run_cross_chain_and_balance())
+    if mode not in ["1", "2"]:
+        logger.error("无效的模式，请通过 menu.py 重新选择")
+        sys.exit(1)
+    asyncio.run(run_balance_update())
 
 if __name__ == "__main__":
+    if len(sys.argv) < 2:
+        print("请通过 menu.py 启动脚本")
+        sys.exit(1)
+    
+    mode = sys.argv[1]
+    directions = sys.argv[2] if len(sys.argv) > 2 else ""
     main()
