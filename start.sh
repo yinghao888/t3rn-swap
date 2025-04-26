@@ -92,12 +92,20 @@ if [[ $? -ne 0 ]]; then
     exit 1
 fi
 
-# 使用 pm2 启动 cross_chain.py
-echo "使用 pm2 启动跨链脚本..."
-pm2 start cross_chain.py --name cross-chain --interpreter python3
-if [[ $? -ne 0 ]]; then
-    echo "pm2 启动脚本失败，请检查 pm2 状态"
-    exit 1
+# 检查是否已有 cross-chain 进程运行
+echo "检查 pm2 进程状态..."
+pm2 pid cross-chain >/dev/null
+if [[ $? -eq 0 ]]; then
+    echo "cross-chain 进程已存在，重新启动..."
+    pm2 restart cross-chain
+else
+    # 使用 pm2 启动 cross_chain.py
+    echo "使用 pm2 启动跨链脚本..."
+    pm2 start cross_chain.py --name cross-chain --interpreter python3
+    if [[ $? -ne 0 ]]; then
+        echo "pm2 启动脚本失败，请检查 pm2 状态"
+        exit 1
+    fi
 fi
 
 # 保存 pm2 进程列表并设置开机自启
