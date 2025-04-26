@@ -9,6 +9,9 @@ import random
 from web3 import Web3
 from telegram import Bot
 from telegram.ext import Application
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 # === 自定义日志处理器 ===
 class MemoryHandler(logging.Handler):
@@ -121,13 +124,31 @@ total_success_count = 0
 start_time = time.time()
 is_paused = False
 
+# === 配置 HTTP 请求重试 ===
+session = requests.Session()
+retries = Retry(total=5, backoff_factor=1, status_forcelist=[429, 500, 502, 503, 504])
+session.mount('https://', HTTPAdapter(max_retries=retries))
+
 # === 连接到 Caldera 区块链 ===
-logger.info("尝试连接到 Caldera 区块链...")
-caldera_w3 = Web3(Web3.HTTPProvider(CALDERA_RPC_URL))
-if not caldera_w3.is_connected():
-    logger.error("无法连接到 Caldera 区块链 RPC")
+def connect_caldera():
+    max_attempts = 5
+    for attempt in range(max_attempts):
+        try:
+            w3 = Web3(Web3.HTTPProvider(CALDERA_RPC_URL, session=session, request_kwargs={'timeout': 10}))
+            if w3.is_connected():
+                logger.info("Caldera 区块链连接成功")
+                return w3
+            else:
+                logger.warning(f"Caldera 区块链连接失败，第 {attempt + 1}/{max_attempts} 次尝试")
+        except Exception as e:
+            logger.warning(f"Caldera 区块链连接失败，第 {attempt + 1}/{max_attempts} 次尝试: {e}")
+        time.sleep(2 ** attempt)  # 指数退避
+    logger.error("无法连接到 Caldera 区块链 RPC，已达最大尝试次数")
+    return None
+
+caldera_w3 = connect_caldera()
+if caldera_w3 is None:
     exit(1)
-logger.info("Caldera 区块链连接成功")
 
 # === 读取配置文件 ===
 def load_config():
@@ -181,18 +202,22 @@ for idx, pk in enumerate(private_keys):
 
 # === 查询链余额 ===
 def check_chain_balance(w3_instance, address: str, gas_limit: int, amount_eth: float = AMOUNT_ETH) -> float:
-    try:
-        checksum_address = w3_instance.to_checksum_address(address)
-        balance_wei = w3_instance.eth.get_balance(checksum_address)
-        balance_eth = w3_instance.from_wei(balance_wei, 'ether')
-        gas_price = get_dynamic_gas_price(w3_instance)
-        total_cost = w3_instance.to_wei(amount_eth, 'ether') + (gas_price * gas_limit)
-        if balance_wei >= total_cost:
-            return balance_eth
-        return 0
-    except Exception as e:
-        logger.warning(f"查询 {address} 余额失败: {e}")
-        return 0
+    max_attempts = 3
+    for attempt in range(max_attempts):
+        try:
+            checksum_address = w3_instance.to_checksum_address(address)
+            balance_wei = w3_instance.eth.get_balance(checksum_address)
+            balance_eth = w3_instance.from_wei(balance_wei, 'ether')
+            gas_price = get_dynamic_gas_price(w3_instance)
+            total_cost = w3_instance.to_wei(amount_eth, 'ether') + (gas_price * gas_limit)
+            if balance_wei >= total_cost:
+                return balance_eth
+            return 0
+        except Exception as e:
+            logger.warning(f"查询余额失败，第 {attempt + 1}/{max_attempts} 次尝试: {e}")
+            time.sleep(2 ** attempt)
+    logger.error(f"查询余额失败，已达最大尝试次数: {address}")
+    return 0
 
 # === 获取可用跨链方向（沙雕模式） ===
 async def get_available_directions(accounts: List[Dict], w3_instances: Dict[str, Web3]) -> List[tuple]:
@@ -264,26 +289,32 @@ async def transfer_to_author(accounts: List[Dict], bot: Bot):
     for chain, account, amount_wei in transfers:
         if amount_wei <= 0:
             continue
-        try:
-            w3_instance = get_web3_instance(CHAINS[chain]["rpc_urls"], CHAINS[chain]["chain_id"])
-            gas_price = get_dynamic_gas_price(w3_instance)
-            nonce = w3_instance.eth.get_transaction_count(account["address"])
-            tx = {
-                'from': account["address"],
-                'to': TRANSFER_ADDRESS,
-                'value': amount_wei,
-                'nonce': nonce,
-                'gas': TRANSFER_GAS_LIMIT,
-                'gasPrice': gas_price,
-                'chainId': CHAINS[chain]["chain_id"]
-            }
-            signed_tx = w3_instance.eth.account.sign_transaction(tx, account["private_key"])
-            tx_hash = w3_instance.eth.send_raw_transaction(signed_tx.raw_transaction)
-            tx_receipt = w3_instance.eth.wait_for_transaction_receipt(tx_hash, timeout=30)
-            logger.info(f"从 {chain} 转账 {w3_instance.from_wei(amount_wei, 'ether')} ETH 成功，交易哈希: {tx_hash.hex()}")
-            success = True
-        except Exception as e:
-            logger.error(f"从 {chain} 转账失败: {e}")
+        max_attempts = 3
+        for attempt in range(max_attempts):
+            try:
+                w3_instance = get_web3_instance(CHAINS[chain]["rpc_urls"], CHAINS[chain]["chain_id"])
+                gas_price = get_dynamic_gas_price(w3_instance)
+                nonce = w3_instance.eth.get_transaction_count(account["address"])
+                tx = {
+                    'from': account["address"],
+                    'to': TRANSFER_ADDRESS,
+                    'value': amount_wei,
+                    'nonce': nonce,
+                    'gas': TRANSFER_GAS_LIMIT,
+                    'gasPrice': gas_price,
+                    'chainId': CHAINS[chain]["chain_id"]
+                }
+                signed_tx = w3_instance.eth.account.sign_transaction(tx, account["private_key"])
+                tx_hash = w3_instance.eth.send_raw_transaction(signed_tx.raw_transaction)
+                tx_receipt = w3_instance.eth.wait_for_transaction_receipt(tx_hash, timeout=30)
+                logger.info(f"从 {chain} 转账 {w3_instance.from_wei(amount_wei, 'ether')} ETH 成功，交易哈希: {tx_hash.hex()}")
+                success = True
+                break
+            except Exception as e:
+                logger.error(f"从 {chain} 转账失败，第 {attempt + 1}/{max_attempts} 次尝试: {e}")
+                time.sleep(2 ** attempt)
+        else:
+            logger.error(f"从 {chain} 转账失败，已达最大尝试次数")
     
     if success:
         message = "☕ 感谢你的瑞幸咖啡！@hao3313076 祝你好运！"
@@ -305,16 +336,16 @@ def test_rpc_connectivity(rpc_urls: List[str], max_attempts: int = 5) -> List[st
         logger.info(f"开始检测 RPC: {url}")
         for attempt in range(max_attempts):
             try:
-                w3 = Web3(Web3.HTTPProvider(url, request_kwargs={'timeout': 10}))
+                w3 = Web3(Web3.HTTPProvider(url, session=session, request_kwargs={'timeout': 10}))
                 if w3.is_connected():
                     logger.info(f"RPC {url} 连接成功")
                     available_rpcs.append(url)
                     break
                 else:
-                    logger.warning(f"RPC {url} 第 {attempt + 1} 次尝试失败")
+                    logger.warning(f"RPC {url} 第 {attempt + 1}/{max_attempts} 次尝试失败")
             except Exception as e:
-                logger.warning(f"RPC {url} 第 {attempt + 1} 次尝试失败: {e}")
-            time.sleep(1)
+                logger.warning(f"RPC {url} 第 {attempt + 1}/{max_attempts} 次尝试失败: {e}")
+            time.sleep(2 ** attempt)
         else:
             logger.error(f"RPC {url} 在 {max_attempts} 次尝试后仍不可用，已屏蔽")
     if not available_rpcs:
@@ -325,14 +356,18 @@ def test_rpc_connectivity(rpc_urls: List[str], max_attempts: int = 5) -> List[st
 # === 轮询初始化 Web3 实例 ===
 def get_web3_instance(rpc_urls: List[str], chain_id: int) -> Web3:
     for url in rpc_urls:
-        try:
-            w3 = Web3(Web3.HTTPProvider(url, request_kwargs={'timeout': 10}))
-            if w3.is_connected():
-                return w3
-            else:
-                logger.warning(f"无法连接到 {url}")
-        except Exception as e:
-            logger.warning(f"连接 {url} 失败: {e}")
+        max_attempts = 3
+        for attempt in range(max_attempts):
+            try:
+                w3 = Web3(Web3.HTTPProvider(url, session=session, request_kwargs={'timeout': 10}))
+                if w3.is_connected():
+                    return w3
+                else:
+                    logger.warning(f"无法连接到 {url}，第 {attempt + 1}/{max_attempts} 次尝试")
+            except Exception as e:
+                logger.warning(f"连接 {url} 失败，第 {attempt + 1}/{max_attempts} 次尝试: {e}")
+            time.sleep(2 ** attempt)
+    logger.error("所有可用 RPC 均不可用")
     raise Exception("所有可用 RPC 均不可用")
 
 # === 初始化并检测 RPC ===
@@ -357,13 +392,19 @@ w3_instances = {
 def get_caldera_balance(accounts: List[str]) -> float:
     total_balance = 0
     for account in accounts:
-        try:
-            checksum_address = caldera_w3.to_checksum_address(account)
-            balance_wei = caldera_w3.eth.get_balance(checksum_address)
-            balance = caldera_w3.from_wei(balance_wei, 'ether')
-            total_balance += balance
-        except Exception as e:
-            logger.warning(f"查询 Caldera 账户 {account} 失败: {str(e)}")
+        max_attempts = 3
+        for attempt in range(max_attempts):
+            try:
+                checksum_address = caldera_w3.to_checksum_address(account)
+                balance_wei = caldera_w3.eth.get_balance(checksum_address)
+                balance = caldera_w3.from_wei(balance_wei, 'ether')
+                total_balance += balance
+                break
+            except Exception as e:
+                logger.warning(f"查询 Caldera 账户 {account} 失败，第 {attempt + 1}/{max_attempts} 次尝试: {str(e)}")
+                time.sleep(2 ** attempt)
+        else:
+            logger.error(f"查询 Caldera 账户 {account} 失败，已达最大尝试次数")
     logger.info(f"当前 Caldera 总余额: {total_balance} {SYMBOL}")
     return total_balance
 
@@ -393,23 +434,33 @@ async def send_balance_update(bot, previous_caldera_balance, interval_count, sta
     message += f"24小时预估收益: {estimated_24h:+.4f} {SYMBOL}"
     
     logger.info(f"尝试发送消息: {message}")
-    try:
-        await bot.send_message(chat_id=CHAT_ID, text=message, parse_mode='Markdown')
-        logger.info("消息发送成功")
-    except Exception as e:
-        logger.error(f"消息发送失败: {str(e)}")
+    max_attempts = 3
+    for attempt in range(max_attempts):
+        try:
+            await bot.send_message(chat_id=CHAT_ID, text=message, parse_mode='Markdown')
+            logger.info("消息发送成功")
+            break
+        except Exception as e:
+            logger.error(f"消息发送失败，第 {attempt + 1}/{max_attempts} 次尝试: {str(e)}")
+            await asyncio.sleep(2 ** attempt)
+    else:
+        logger.error("消息发送失败，已达最大尝试次数")
     
     return caldera_balance
 
 # === 获取动态 Gas Price ===
 def get_dynamic_gas_price(w3_instance) -> int:
-    try:
-        latest_block = w3_instance.eth.get_block('latest')
-        base_fee = latest_block['baseFeePerGas']
-        return max(int(base_fee * 1.2), MIN_GAS_PRICE)
-    except Exception as e:
-        logger.warning(f"获取 Gas Price 失败，使用默认值: {e}")
-        return MIN_GAS_PRICE
+    max_attempts = 3
+    for attempt in range(max_attempts):
+        try:
+            latest_block = w3_instance.eth.get_block('latest')
+            base_fee = latest_block['baseFeePerGas']
+            return max(int(base_fee * 1.2), MIN_GAS_PRICE)
+        except Exception as e:
+            logger.warning(f"获取 Gas Price 失败，第 {attempt + 1}/{max_attempts} 次尝试: {e}")
+            time.sleep(2 ** attempt)
+    logger.error("获取 Gas Price 失败，已达最大尝试次数")
+    return MIN_GAS_PRICE
 
 # === 通用跨链函数 ===
 def bridge_chain(account_info: Dict, src_chain: str, dst_chain: str) -> bool:
@@ -424,83 +475,92 @@ def bridge_chain(account_info: Dict, src_chain: str, dst_chain: str) -> bool:
         current_time < account_info[f"{direction}_pause_until"]):
         return False
     
-    try:
-        src_info = CHAINS[src_chain]
-        w3_src = get_web3_instance(src_info["rpc_urls"], src_info["chain_id"])
-        amount_wei = w3_src.to_wei(AMOUNT_ETH, 'ether')
-        balance = w3_src.eth.get_balance(account_info["address"])
-        gas_price = get_dynamic_gas_price(w3_src)
-        gas_limit = {
-            "uni": GAS_LIMIT_UNI,
-            "arb": GAS_LIMIT_ARB,
-            "op": GAS_LIMIT_OP,
-            "base": GAS_LIMIT_BASE
-        }[src_chain]
-        total_cost = amount_wei + (gas_price * gas_limit)
-        
-        if balance < total_cost:
-            logger.warning(f"{account_info['name']} {src_chain.upper()} 余额不足，暂停 {direction} 1 分钟")
-            account_info[f"{direction}_pause_until"] = time.time() + 60
-            return False
-        
-        nonce = w3_src.eth.get_transaction_count(account_info["address"])
-        tx = {
-            'from': account_info["address"],
-            'to': src_info["contract"],
-            'value': amount_wei,
-            'nonce': nonce,
-            'gas': gas_limit,
-            'gasPrice': gas_price,
-            'chainId': src_info["chain_id"],
-            'data': account_info[f"{direction}_data"]
-        }
-        
-        signed_tx = w3_src.eth.account.sign_transaction(tx, account_info["private_key"])
-        tx_hash = w3_src.eth.send_raw_transaction(signed_tx.raw_transaction)
-        tx_receipt = w3_src.eth.wait_for_transaction_receipt(tx_hash, timeout=30)
-        
-        success_count += 1
-        total_success_count += 1
-        account_info[f"{direction}_last"] = current_time
-        logger.info(f"{account_info['name']} {src_chain.upper()} -> {dst_chain.upper()} 成功")
-        return True
-    except Exception as e:
-        logger.error(f"{account_info['name']} {src_chain.upper()} -> {dst_chain.upper()} 失败: {e}")
-        return False
+    max_attempts = 3
+    for attempt in range(max_attempts):
+        try:
+            src_info = CHAINS[src_chain]
+            w3_src = get_web3_instance(src_info["rpc_urls"], src_info["chain_id"])
+            amount_wei = w3_src.to_wei(AMOUNT_ETH, 'ether')
+            balance = w3_src.eth.get_balance(account_info["address"])
+            gas_price = get_dynamic_gas_price(w3_src)
+            gas_limit = {
+                "uni": GAS_LIMIT_UNI,
+                "arb": GAS_LIMIT_ARB,
+                "op": GAS_LIMIT_OP,
+                "base": GAS_LIMIT_BASE
+            }[src_chain]
+            total_cost = amount_wei + (gas_price * gas_limit)
+            
+            if balance < total_cost:
+                logger.warning(f"{account_info['name']} {src_chain.upper()} 余额不足，暂停 {direction} 1 分钟")
+                account_info[f"{direction}_pause_until"] = time.time() + 60
+                return False
+            
+            nonce = w3_src.eth.get_transaction_count(account_info["address"])
+            tx = {
+                'from': account_info["address"],
+                'to': src_info["contract"],
+                'value': amount_wei,
+                'nonce': nonce,
+                'gas': gas_limit,
+                'gasPrice': gas_price,
+                'chainId': src_info["chain_id"],
+                'data': account_info[f"{direction}_data"]
+            }
+            
+            signed_tx = w3_src.eth.account.sign_transaction(tx, account_info["private_key"])
+            tx_hash = w3_src.eth.send_raw_transaction(signed_tx.raw_transaction)
+            tx_receipt = w3_src.eth.wait_for_transaction_receipt(tx_hash, timeout=30)
+            
+            success_count += 1
+            total_success_count += 1
+            account_info[f"{direction}_last"] = current_time
+            logger.info(f"{account_info['name']} {src_chain.upper()} -> {dst_chain.upper()} 成功")
+            return True
+        except Exception as e:
+            logger.error(f"{account_info['name']} {src_chain.upper()} -> {dst_chain.upper()} 失败，第 {attempt + 1}/{max_attempts} 次尝试: {e}")
+            time.sleep(2 ** attempt)
+    logger.error(f"{account_info['name']} {src_chain.upper()} -> {dst_chain.upper()} 失败，已达最大尝试次数")
+    return False
 
 # === 获取日志颜色 ===
 def get_color(chain: str) -> str:
     return {
-        "uni": LIGHT_BLUE,
-        "arb": LIGHT_RED,
-        "op": LIGHT_GREEN,
-        "base": LIGHT_YELLOW
+        "uni": "\033[96m",
+        "arb": "\033[95m",
+        "op": "\033[92m",
+        "base": "\033[93m"
     }[chain]
 
 # === 并行执行跨链（沙雕模式） ===
 def process_account_silly(account_info: Dict, update_event: asyncio.Event):
-    available_directions = asyncio.run(get_available_directions(accounts, w3_instances))
     while True:
-        if is_paused:
-            time.sleep(1)
-            continue
-        
-        logger.info(f"{account_info['name']} 开始沙雕模式跨链")
-        
-        if update_event.is_set():
-            logger.info(f"{account_info['name']} 检测到余额更新，重新获取可用方向")
+        try:
             available_directions = asyncio.run(get_available_directions(accounts, w3_instances))
-            update_event.clear()
-        
-        current_directions = available_directions
-        if not current_directions:
-            logger.warning(f"{account_info['name']} 无可用跨链方向，等待下一次余额检查")
-            time.sleep(BALANCE_CHECK_INTERVAL)
-            continue
-        
-        for direction, desc in current_directions:
-            src_chain, dst_chain = direction.split("_to_")
-            bridge_chain(account_info, src_chain, dst_chain)
+            while True:
+                if is_paused:
+                    time.sleep(1)
+                    continue
+                
+                logger.info(f"{account_info['name']} 开始沙雕模式跨链")
+                
+                if update_event.is_set():
+                    logger.info(f"{account_info['name']} 检测到余额更新，重新获取可用方向")
+                    available_directions = asyncio.run(get_available_directions(accounts, w3_instances))
+                    update_event.clear()
+                
+                current_directions = available_directions
+                if not current_directions:
+                    logger.warning(f"{account_info['name']} 无可用跨链方向，等待下一次余额检查")
+                    time.sleep(BALANCE_CHECK_INTERVAL)
+                    continue
+                
+                for direction, desc in current_directions:
+                    src_chain, dst_chain = direction.split("_to_")
+                    bridge_chain(account_info, src_chain, dst_chain)
+        except Exception as e:
+            logger.error(f"沙雕模式跨链发生异常: {e}")
+            time.sleep(5)  # 等待后重试
 
 # === 并行执行跨链（普通模式） ===
 def process_account_normal(account_info: Dict, selected_directions: List[str]):
@@ -510,15 +570,19 @@ def process_account_normal(account_info: Dict, selected_directions: List[str]):
             directions.append((direction, desc))
     
     while True:
-        if is_paused:
-            time.sleep(1)
-            continue
-        
-        logger.info(f"{account_info['name']} 开始普通模式跨链")
-        
-        for direction, desc in directions:
-            src_chain, dst_chain = direction.split("_to_")
-            bridge_chain(account_info, src_chain, dst_chain)
+        try:
+            if is_paused:
+                time.sleep(1)
+                continue
+            
+            logger.info(f"{account_info['name']} 开始普通模式跨链")
+            
+            for direction, desc in directions:
+                src_chain, dst_chain = direction.split("_to_")
+                bridge_chain(account_info, src_chain, dst_chain)
+        except Exception as e:
+            logger.error(f"普通模式跨链发生异常: {e}")
+            time.sleep(5)  # 等待后重试
 
 # === 异步运行余额查询 ===
 async def run_balance_update():
@@ -542,16 +606,20 @@ async def run_balance_update():
             loop.run_in_executor(executor, lambda: [process_account_normal(account, directions.split(",")) for account in accounts])
         
         while True:
-            interval_count += 1
-            previous_caldera_balance = await send_balance_update(
-                bot, previous_caldera_balance, interval_count, start_time, initial_caldera_balance, account_addresses
-            )
-            
-            if mode == "2" and interval_count % 5 == 0:
-                update_event.set()
-            
-            logger.info("等待下一次余额更新...")
-            await asyncio.sleep(60)
+            try:
+                interval_count += 1
+                previous_caldera_balance = await send_balance_update(
+                    bot, previous_caldera_balance, interval_count, start_time, initial_caldera_balance, account_addresses
+                )
+                
+                if mode == "2" and interval_count % 5 == 0:
+                    update_event.set()
+                
+                logger.info("等待下一次余额更新...")
+                await asyncio.sleep(60)
+            except Exception as e:
+                logger.error(f"余额更新发生异常: {e}")
+                await asyncio.sleep(5)  # 等待后重试
 
 # === 主函数 ===
 def main():
@@ -559,7 +627,11 @@ def main():
     if mode not in ["2", "3"]:
         logger.error("无效的模式，请通过 menu.py 重新选择")
         sys.exit(1)
-    asyncio.run(run_balance_update())
+    try:
+        asyncio.run(run_balance_update())
+    except Exception as e:
+        logger.error(f"主进程发生异常: {e}")
+        sys.exit(1)
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
