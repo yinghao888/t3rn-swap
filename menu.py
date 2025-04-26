@@ -45,9 +45,9 @@ def display_banner():
     banner = """
     ╔════════════════════════════════════════════════════════════════════╗
     ║                                                                    ║
-    ║   🚀 由 @hao3313076 一天一夜没睡匠心制作！🚀                    ║
-    ║   💥 不关注我的推特 @hao3313076，JJ短10cm！💥                  ║
-    ║   📢 快去 Twitter 关注我，获取最新跨链动态和福利！📢           ║
+    ║   🚀 由 @hao3313076 一天一夜没睡匠心制作！🚀                           ║
+    ║   💥 不关注我的推特 @hao3313076，JJ短10cm！💥                         ║
+    ║   📢 快去 Twitter 关注我，获取最新跨链动态和福利！📢                     ║
     ║                                                                    ║
     ╚════════════════════════════════════════════════════════════════════╝
     """
@@ -157,38 +157,35 @@ def get_mode_and_directions():
     
     return choice, ",".join(selected_directions) if selected_directions else ""
 
-# === 检查 pm2 进程状态 ===
-def check_pm2_process():
-    result = subprocess.run(["pm2", "list"], capture_output=True, text=True)
-    return "cross-chain" in result.stdout and "online" in result.stdout
-
-# === 停止 pm2 进程 ===
-def stop_pm2_process():
-    subprocess.run(["pm2", "stop", "cross-chain"])
-
-# === 查看 pm2 日志 ===
-def view_pm2_logs():
-    subprocess.run(["pm2", "logs", "cross-chain", "--lines", "15"])
-
 # === 启动 worker.py ===
 def start_worker(mode, directions=""):
-    stop_pm2_process()  # 先停止现有进程
-    cmd = ["pm2", "start", "worker.py", "--name", "cross-chain", "--interpreter", "python3"]
+    # 使用 screen 启动 worker.py
     if mode == "2":
-        cmd.extend(["--", "silly"])
+        cmd = f"screen -dmS cross_chain python3 worker.py silly"
     elif mode == "3":
-        cmd.extend(["--", "normal", directions])
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode == 0:
-        subprocess.run(["pm2", "save"])
-        print("跨链脚本已通过 pm2 启动，进程名称为 cross-chain")
-        print("你可以使用以下命令管理脚本：")
-        print("  查看状态：pm2 status")
-        print("  查看日志：pm2 logs cross-chain")
-        print("  停止脚本：pm2 stop cross-chain")
-        print("  重启脚本：pm2 restart cross-chain")
-    else:
-        print("pm2 启动脚本失败，请检查 pm2 状态")
+        cmd = f"screen -dmS cross_chain python3 worker.py normal {directions}"
+    subprocess.run(cmd, shell=True)
+    print("跨链脚本已在 screen 会话（cross_chain）中启动")
+    print("你可以使用以下命令管理脚本：")
+    print("  查看 screen 会话：screen -ls")
+    print("  进入 screen 会话：screen -r cross_chain")
+    print("  查看日志：cat worker.log")
+
+# === 查看日志 ===
+def view_logs():
+    print("\n=== 最近 15 行日志 ===")
+    try:
+        with open("worker.log", "r") as f:
+            lines = f.readlines()[-15:]
+        for line in lines:
+            print(line.strip())
+    except FileNotFoundError:
+        print("未找到 worker.log 文件，脚本可能未运行")
+
+# === 暂停运行 ===
+def stop_worker():
+    subprocess.run("screen -S cross_chain -X quit", shell=True)
+    print("脚本已暂停")
 
 # === 主函数 ===
 def main():
@@ -214,28 +211,16 @@ def main():
             print("按 Enter 返回菜单...")
             input()
         elif choice == "4":
-            if check_pm2_process():
-                view_pm2_logs()
-            else:
-                print("cross-chain 进程未运行，无法查看日志")
+            view_logs()
             print("按 Enter 返回菜单...")
             input()
         elif choice == "5":
-            if check_pm2_process():
-                subprocess.run(["pm2", "stop", "cross-chain"])
-                print("脚本已暂停")
-            else:
-                print("cross-chain 进程未运行")
+            stop_worker()
             print("按 Enter 继续运行或返回菜单...")
             input()
-            if check_pm2_process():
-                subprocess.run(["pm2", "restart", "cross-chain"])
-            else:
-                print("请重新选择模式以启动脚本")
         elif choice == "6":
             print("正在删除脚本...")
-            if check_pm2_process():
-                subprocess.run(["pm2", "delete", "cross-chain"])
+            stop_worker()
             try:
                 os.remove(__file__)
                 os.remove("worker.py")
