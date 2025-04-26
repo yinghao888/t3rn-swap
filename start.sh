@@ -23,12 +23,32 @@ fi
 # 安装依赖
 echo "检查并安装 Python 依赖..."
 pip3 install web3 python-telegram-bot --user
+if [[ $? -ne 0 ]]; then
+    echo "依赖安装失败，尝试以全局模式安装..."
+    sudo pip3 install web3 python-telegram-bot
+    if [[ $? -ne 0 ]]; then
+        echo "依赖安装失败，请检查网络或 pip 配置"
+        exit 1
+    fi
+fi
+
+# 检查依赖是否安装成功
+python3 -c "import telegram" 2>/dev/null
+if [[ $? -ne 0 ]]; then
+    echo "python-telegram-bot 模块未正确安装，请检查"
+    exit 1
+fi
+python3 -c "import web3" 2>/dev/null
+if [[ $? -ne 0 ]]; then
+    echo "web3 模块未正确安装，请检查"
+    exit 1
+fi
 
 # 下载并运行主脚本
-echo "下载 t3rn-swap 脚本..."
+echo "下载 cross_chain.py 脚本..."
 wget -O cross_chain.py https://raw.githubusercontent.com/yinghao888/t3rn-swap/main/cross_chain.py
 if [[ $? -ne 0 ]]; then
-    echo "下载脚本失败，请检查仓库地址或网络"
+    echo "下载 cross_chain.py 失败，请检查网络或仓库地址"
     exit 1
 fi
 
