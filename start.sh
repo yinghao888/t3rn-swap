@@ -8,7 +8,6 @@ if [[ -z "$PYTHON_VERSION" ]]; then
     exit 1
 fi
 
-# 比较版本
 if [[ "$(printf '%s\n' "$PYTHON_MIN_VERSION" "$PYTHON_VERSION" | sort -V | head -n1)" != "$PYTHON_MIN_VERSION" ]]; then
     echo "Python 版本 $PYTHON_VERSION 不满足最低要求 $PYTHON_MIN_VERSION"
     exit 1
@@ -25,12 +24,15 @@ fi
 echo "检查并安装 Python 依赖..."
 pip3 install web3 python-telegram-bot --user
 
-# 检查主脚本是否存在
-if [[ ! -f "cross_chain.py" ]]; then
-    echo "未找到 cross_chain.py 脚本"
+# 下载并运行主脚本
+echo "下载 t3rn-swap 脚本..."
+wget -O cross_chain.py https://raw.githubusercontent.com/yinghao888/t3rn-swap/main/cross_chain.py
+if [[ $? -ne 0 ]]; then
+    echo "下载脚本失败，请检查仓库地址或网络"
     exit 1
 fi
 
-# 启动主脚本
+sed -i 's/\r//' cross_chain.py
+chmod +x cross_chain.py
 echo "启动跨链脚本..."
 python3 cross_chain.py
