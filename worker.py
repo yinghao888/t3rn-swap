@@ -73,7 +73,8 @@ ARB_RPC_URLS = [
     "https://arbitrum-sepolia.drpc.org",
 ]
 OP_RPC_URLS = [
-    "https://sepolia.optimism.io",
+    "https://optimism-sepolia.blockpi.network/v1/rpc/public",
+    "https://sepolia-rollup.arbitrum.io/rpc",  # 备用 RPC
 ]
 BASE_RPC_URLS = [
     "https://base-sepolia.gateway.tenderly.co",
@@ -133,7 +134,7 @@ is_paused = False
 
 # === 配置 HTTP 请求重试 ===
 session = requests.Session()
-retries = Retry(total=5, backoff_factor=1, status_forcelist=[429, 500, 502, 503, 504])
+retries = Retry(total=5, backoff_factor=2, status_forcelist=[429, 500, 502, 503, 504])
 session.mount('https://', HTTPAdapter(max_retries=retries))
 
 # === 连接到 Caldera 区块链 ===
@@ -141,7 +142,7 @@ def connect_caldera():
     max_attempts = 5
     for attempt in range(max_attempts):
         try:
-            w3 = Web3(Web3.HTTPProvider(CALDERA_RPC_URL, session=session, request_kwargs={'timeout': 10}))
+            w3 = Web3(Web3.HTTPProvider(CALDERA_RPC_URL, session=session, request_kwargs={'timeout': 15}))
             if w3.is_connected():
                 logger.info("Caldera 区块链连接成功")
                 return w3
@@ -346,7 +347,7 @@ def test_rpc_connectivity(rpc_urls: List[str], max_attempts: int = 5) -> List[st
         logger.info(f"开始检测 RPC: {url}")
         for attempt in range(max_attempts):
             try:
-                w3 = Web3(Web3.HTTPProvider(url, session=session, request_kwargs={'timeout': 10}))
+                w3 = Web3(Web3.HTTPProvider(url, session=session, request_kwargs={'timeout': 15}))
                 if w3.is_connected():
                     logger.info(f"RPC {url} 连接成功")
                     available_rpcs.append(url)
@@ -369,7 +370,7 @@ def get_web3_instance(rpc_urls: List[str], chain_id: int) -> Web3:
         max_attempts = 3
         for attempt in range(max_attempts):
             try:
-                w3 = Web3(Web3.HTTPProvider(url, session=session, request_kwargs={'timeout': 10}))
+                w3 = Web3(Web3.HTTPProvider(url, session=session, request_kwargs={'timeout': 15}))
                 if w3.is_connected():
                     return w3
                 else:
