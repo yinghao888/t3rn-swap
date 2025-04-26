@@ -23,11 +23,11 @@ class MemoryHandler(logging.Handler):
         return "\n".join(self.log_records)
 
 # === 配置日志 ===
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s', filename="worker.log")
 logger = logging.getLogger()
 memory_handler = MemoryHandler()
 logger.handlers = [memory_handler]
-logger.propagate = False
+logger.propagate = True  # 确保日志写入文件
 
 # === 可自定义参数 ===
 AMOUNT_ETH = 1  # 所有跨链金额（单位：ETH）
@@ -146,7 +146,7 @@ def load_config():
         directions = mode_info.split(":")[1] if ":" in mode_info else ""
         return private_keys_input.split("+"), chat_id, mode, directions
     except FileNotFoundError:
-        logger.error("未找到 config.txt 文件，请先运行 setup.py 配置")
+        logger.error("未找到 config.txt 文件，请先运行 menu.py 配置")
         exit(1)
     except Exception as e:
         logger.error(f"读取配置文件失败: {e}")
