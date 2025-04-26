@@ -22,10 +22,10 @@ fi
 
 # 安装 Python 依赖
 echo "检查并安装 Python 依赖..."
-pip3 install web3 python-telegram-bot --user
+pip3 install web3 python-telegram-bot urllib3==1.26.6 chardet==4.0.0 --user
 if [[ $? -ne 0 ]]; then
     echo "Python 依赖安装失败，尝试以全局模式安装..."
-    sudo pip3 install web3 python-telegram-bot
+    sudo pip3 install web3 python-telegram-bot urllib3==1.26.6 chardet==4.0.0
     if [[ $? -ne 0 ]]; then
         echo "Python 依赖安装失败，请检查网络或 pip 配置"
         exit 1
@@ -65,7 +65,14 @@ if ! command -v pm2 &> /dev/null; then
     fi
 fi
 
-# 下载 cross_chain.py 脚本
+# 下载 setup.py 和 cross_chain.py 脚本
+echo "下载 setup.py 脚本..."
+wget -O setup.py https://raw.githubusercontent.com/yinghao888/t3rn-swap/main/setup.py
+if [[ $? -ne 0 ]]; then
+    echo "下载 setup.py 失败，请检查网络或仓库地址"
+    exit 1
+fi
+
 echo "下载 cross_chain.py 脚本..."
 wget -O cross_chain.py https://raw.githubusercontent.com/yinghao888/t3rn-swap/main/cross_chain.py
 if [[ $? -ne 0 ]]; then
@@ -73,10 +80,19 @@ if [[ $? -ne 0 ]]; then
     exit 1
 fi
 
+sed -i 's/\r//' setup.py
 sed -i 's/\r//' cross_chain.py
-chmod +x cross_chain.py
+chmod +x setup.py cross_chain.py
 
-# 使用 pm2 启动脚本
+# 运行 setup.py 收集用户输入
+echo "运行 setup.py 收集用户输入..."
+python3 setup.py
+if [[ $? -ne 0 ]]; then
+    echo "setup.py 运行失败，请检查输入或脚本"
+    exit 1
+fi
+
+# 使用 pm2 启动 cross_chain.py
 echo "使用 pm2 启动跨链脚本..."
 pm2 start cross_chain.py --name cross-chain --interpreter python3
 if [[ $? -ne 0 ]]; then
