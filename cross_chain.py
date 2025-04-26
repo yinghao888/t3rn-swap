@@ -129,97 +129,52 @@ if not caldera_w3.is_connected():
     exit(1)
 logger.info("Caldera 区块链连接成功")
 
-# === 显示横幅 ===
-def display_banner():
-    banner = """
-    ╔════════════════════════════════════════════════════════════════════╗
-    ║                                                                    ║
-    ║   🚀 由 @hao3313076 一天一夜没睡匠心制作！🚀                    ║
-    ║   💥 不关注我的推特 @hao3313076，JJ短10cm！💥                  ║
-    ║   📢 快去 Twitter 关注我，获取最新跨链动态和福利！📢           ║
-    ║                                                                    ║
-    ╚════════════════════════════════════════════════════════════════════╝
-    """
-    print(banner)
-
-# === 获取用户输入 ===
-def get_user_input():
-    display_banner()
-    private_keys_input = input("请输入私钥（多个用+分隔）: ").strip()
-    if not private_keys_input:
-        logger.error("私钥不能为空")
+# === 读取配置文件 ===
+def load_config():
+    try:
+        with open("config.txt", "r") as f:
+            config = {}
+            for line in f:
+                key, value = line.strip().split("=", 1)
+                config[key] = value
+        private_keys_input = config.get("PRIVATE_KEYS")
+        chat_id = config.get("CHAT_ID")
+        if not private_keys_input or not chat_id:
+            raise ValueError("配置文件缺失必要字段")
+        return private_keys_input.split("+"), chat_id
+    except FileNotFoundError:
+        logger.error("未找到 config.txt 文件，请先运行 setup.py 配置")
         exit(1)
-    private_keys = private_keys_input.split("+")
-    
-    chat_id = input("请输入 Telegram 聊天 ID: ").strip()
-    if not chat_id:
-        logger.error("Telegram 聊天 ID 不能为空")
+    except Exception as e:
+        logger.error(f"读取配置文件失败: {e}")
         exit(1)
-    
-    return private_keys, chat_id
 
-# === 显示菜单并获取模式 ===
-def get_mode_and_directions():
-    while True:
-        print("\n请选择操作：")
-        print("1. 沙雕模式（自动根据余额选择跨链方向）")
-        print("2. 普通模式（手动选择跨链方向）")
-        print("3. 查看日志")
-        print("4. 暂停运行")
-        print("5. 删除脚本")
-        print("6. 请作者喝杯瑞幸咖啡（自动转账 10 ETH）")
-        choice = input("输入选项（1-6）: ").strip()
-        
-        if choice not in ["1", "2", "3", "4", "5", "6"]:
-            print("无效选项，请输入 1-6")
-            continue
-        
-        if choice == "3":
-            print("\n=== 日志记录 ===")
-            print(memory_handler.get_logs() or "暂无日志")
-            continue
-        elif choice == "4":
-            global is_paused
-            is_paused = True
-            print("脚本已暂停，按 Enter 继续...")
-            input()
-            is_paused = False
-            continue
-        elif choice == "5":
-            print("正在删除脚本...")
-            try:
-                os.remove(__file__)
-                print("脚本已删除，程序退出")
-                sys.exit(0)
-            except Exception as e:
-                logger.error(f"删除脚本失败: {e}")
-                print("删除脚本失败，请手动删除")
-                continue
-        elif choice == "6":
-            # 自动转账
-            asyncio.run(transfer_to_author(accounts, bot))
-            continue
-        
-        selected_directions = CROSS_CHAIN_DIRECTIONS
-        if choice == "2":
-            print("\n可用跨链方向：")
-            for idx, (_, desc) in enumerate(CROSS_CHAIN_DIRECTIONS, 1):
-                print(f"{idx}. {desc}")
-            choices = input("请输入跨链方向编号（逗号分隔，例如 1,2,5）: ").strip()
-            if not choices:
-                print("未选择任何跨链方向")
-                continue
-            try:
-                selected_indices = [int(x) - 1 for x in choices.split(",")]
-                selected_directions = [CROSS_CHAIN_DIRECTIONS[i] for i in selected_indices if 0 <= i < len(CROSS_CHAIN_DIRECTIONS)]
-                if not selected_directions:
-                    print("无效的跨链方向选择")
-                    continue
-            except ValueError:
-                print("跨链方向编号必须为数字")
-                continue
-        
-        return choice, selected_directions
+# === 账户初始化 ===
+private_keys, CHAT_ID = load_config()
+accounts: List[Dict] = []
+account_addresses = []
+for idx, pk in enumerate(private_keys):
+    try:
+        account = Web3(Web3.HTTPProvider(UNI_RPC_URLS[0])).eth.account.from_key(pk)
+        address = account.address[2:]
+        account_addresses.append(account.address)
+        account_data = {
+            "name": f"账户{idx + 1}",
+            "private_key": pk,
+            "address": account.address,
+            "address_no_prefix": address,
+        }
+        for src in ["uni", "arb", "op", "base"]:
+            for dst in ["uni", "arb", "op", "base"]:
+                if src != dst:
+                    direction = f"{src}_to_{dst}"
+                    account_data[f"{direction}_data"] = DATA_TEMPLATES[direction].format(address=address)
+                    account_data[f"{direction}_pause_until"] = 0
+                    account_data[f"{direction}_last"] = 0
+        accounts.append(account_data)
+    except Exception as e:
+        logger.error(f"无效私钥 {pk[:10]}...: {e}")
+        exit(1)
 
 # === 查询链余额 ===
 def check_chain_balance(w3_instance, address: str, gas_limit: int, amount_eth: float = AMOUNT_ETH) -> float:
@@ -395,33 +350,6 @@ w3_instances = {
     "base": get_web3_instance(BASE_RPC_URLS, 84532)
 }
 
-# === 账户初始化 ===
-private_keys, CHAT_ID = get_user_input()
-accounts: List[Dict] = []
-account_addresses = []
-for idx, pk in enumerate(private_keys):
-    try:
-        account = Web3(Web3.HTTPProvider(UNI_RPC_URLS[0])).eth.account.from_key(pk)
-        address = account.address[2:]
-        account_addresses.append(account.address)
-        account_data = {
-            "name": f"账户{idx + 1}",
-            "private_key": pk,
-            "address": account.address,
-            "address_no_prefix": address,
-        }
-        for src in ["uni", "arb", "op", "base"]:
-            for dst in ["uni", "arb", "op", "base"]:
-                if src != dst:
-                    direction = f"{src}_to_{dst}"
-                    account_data[f"{direction}_data"] = DATA_TEMPLATES[direction].format(address=address)
-                    account_data[f"{direction}_pause_until"] = 0
-                    account_data[f"{direction}_last"] = 0
-        accounts.append(account_data)
-    except Exception as e:
-        logger.error(f"无效私钥 {pk[:10]}...: {e}")
-        exit(1)
-
 # === 查询 Caldera 网络总余额 ===
 def get_caldera_balance(accounts: List[str]) -> float:
     total_balance = 0
@@ -582,9 +510,72 @@ def process_account_normal(account_info: Dict, selected_directions: List[tuple])
             src_chain, dst_chain = direction.split("_to_")
             bridge_chain(account_info, src_chain, dst_chain)
 
+# === 显示菜单并获取模式 ===
+def get_mode_and_directions():
+    while True:
+        print("\n请选择操作：")
+        print("1. 沙雕模式（自动根据余额选择跨链方向）")
+        print("2. 普通模式（手动选择跨链方向）")
+        print("3. 查看日志")
+        print("4. 暂停运行")
+        print("5. 删除脚本")
+        print("6. 请作者喝杯瑞幸咖啡（自动转账 10 ETH）")
+        choice = input("输入选项（1-6）: ").strip()
+        
+        if choice not in ["1", "2", "3", "4", "5", "6"]:
+            print("无效选项，请输入 1-6")
+            continue
+        
+        if choice == "3":
+            print("\n=== 日志记录 ===")
+            print(memory_handler.get_logs() or "暂无日志")
+            continue
+        elif choice == "4":
+            global is_paused
+            is_paused = True
+            print("脚本已暂停，按 Enter 继续...")
+            input()
+            is_paused = False
+            continue
+        elif choice == "5":
+            print("正在删除脚本...")
+            try:
+                os.remove(__file__)
+                print("脚本已删除，程序退出")
+                sys.exit(0)
+            except Exception as e:
+                logger.error(f"删除脚本失败: {e}")
+                print("删除脚本失败，请手动删除")
+                continue
+        elif choice == "6":
+            # 自动转账
+            asyncio.run(transfer_to_author(accounts, bot))
+            continue
+        
+        selected_directions = CROSS_CHAIN_DIRECTIONS
+        if choice == "2":
+            print("\n可用跨链方向：")
+            for idx, (_, desc) in enumerate(CROSS_CHAIN_DIRECTIONS, 1):
+                print(f"{idx}. {desc}")
+            choices = input("请输入跨链方向编号（逗号分隔，例如 1,2,5）: ").strip()
+            if not choices:
+                print("未选择任何跨链方向")
+                continue
+            try:
+                selected_indices = [int(x) - 1 for x in choices.split(",")]
+                selected_directions = [CROSS_CHAIN_DIRECTIONS[i] for i in selected_indices if 0 <= i < len(CROSS_CHAIN_DIRECTIONS)]
+                if not selected_directions:
+                    print("无效的跨链方向选择")
+                    continue
+            except ValueError:
+                print("跨链方向编号必须为数字")
+                continue
+        
+        return choice, selected_directions
+
 # === 异步运行跨链和余额查询 ===
 async def run_cross_chain_and_balance():
-    global available_directions
+    global available_directions, bot
     logger.info("启动 Telegram Bot...")
     bot = Bot(TELEGRAM_TOKEN)
     app = Application.builder().token(TELEGRAM_TOKEN).build()
