@@ -31,7 +31,6 @@ OP_RPC_URLS = [
 UNI_RPC_URLS = [
     "https://unichain-sepolia.drpc.org",
     "https://unichain-sepolia-rpc.publicnode.com",
-    "https://sepolia.unichain.org",
 ]
 
 # 合约地址
