@@ -5,6 +5,7 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 import os
 import telegram
+import json
 
 # === ANSI 颜色代码 ===
 LIGHT_BLUE = "\033[96m"
@@ -24,13 +25,13 @@ REQUEST_INTERVAL = 1  # 同一方向请求间隔（秒）
 OP_RPC_URLS = [
     "https://sepolia.optimism.io",
     "https://optimism-sepolia.drpc.org",
-    "https://sepolia-optimism.etherscan.io",
+    "https://rpc.ankr.com/optimism_sepolia",
 ]
 
 # UNI 测试网 RPC 配置
 UNI_RPC_URLS = [
-    "https://unichain-sepolia.drpc.org",
     "https://unichain-sepolia-rpc.publicnode.com",
+    "https://unichain-sepolia.drpc.org",
 ]
 
 # 合约地址
@@ -78,6 +79,19 @@ def get_web3_instance(rpc_urls: List[str], chain_id: int) -> Web3:
             logger.warning(f"连接 {url} 失败: {e}")
     raise Exception("所有可用 RPC 均不可用")
 
+# 读取 Telegram Chat IDs
+def get_chat_ids():
+    if not os.path.exists('telegram.conf'):
+        logger.warning("未找到 telegram.conf，未配置 Telegram 通知")
+        return []
+    try:
+        with open('telegram.conf', 'r') as f:
+            config = json.load(f)
+        return config.get('chat_ids', [])
+    except Exception as e:
+        logger.error(f"读取 telegram.conf 失败: {e}")
+        return []
+
 # 优化参数
 GAS_LIMIT_OP = 250000
 GAS_LIMIT_UNI = 400000
@@ -96,22 +110,31 @@ UNI_RPC_URLS = test_rpc_connectivity(UNI_RPC_URLS)
 
 # 账户初始化
 accounts: List[Dict] = []
-for acc in ACCOUNTS:
-    account = Web3(Web3.HTTPProvider(OP_RPC_URLS[0])).eth.account.from_key(acc["private_key"])
-    address = account.address[2:]
-    op_data = OP_DATA_TEMPLATE.format(address=address)
-    accounts.append({
-        "name": acc["name"],
-        "private_key": acc["private_key"],
-        "address": account.address,
-        "address_no_prefix": address,
-        "op_data": op_data.replace("6e6974", "61726274"),  # OP -> UNI
-        "uni_data": UNI_DATA_TEMPLATE.format(address=address),  # UNI -> OP
-        "op_pause_until": 0,
-        "uni_pause_until": 0,
-        "op_to_uni_last": 0,
-        "uni_to_op_last": 0
-    })
+if not ACCOUNTS:
+    logger.error("账户列表为空，请在 bridge-bot.sh 中添加私钥")
+else:
+    for acc in ACCOUNTS:
+        try:
+            if not acc["private_key"]:
+                logger.warning(f"账户 {acc['name']} 私钥为空，跳过")
+                continue
+            account = Web3(Web3.HTTPProvider(OP_RPC_URLS[0])).eth.account.from_key(acc["private_key"])
+            address = account.address[2:]
+            op_data = OP_DATA_TEMPLATE.format(address=address)
+            accounts.append({
+                "name": acc["name"],
+                "private_key": acc["private_key"],
+                "address": account.address,
+                "address_no_prefix": address,
+                "op_data": op_data.replace("6e6974", "61726274"),  # OP -> UNI
+                "uni_data": UNI_DATA_TEMPLATE.format(address=address),  # UNI -> OP
+                "op_pause_until": 0,
+                "uni_pause_until": 0,
+                "op_to_uni_last": 0,
+                "uni_to_op_last": 0
+            })
+        except Exception as e:
+            logger.error(f"初始化账户 {acc['name']} 失败: {e}")
 
 # 获取动态 Gas Price
 def get_dynamic_gas_price(w3_instance) -> int:
@@ -159,9 +182,15 @@ def bridge_op_to_uni(account_info: Dict) -> bool:
         total_success_count += 1
         account_info["op_to_uni_last"] = current_time
         logger.info(f"{LIGHT_BLUE}{account_info['name']} OP -> UNI 成功{RESET}")
-        if os.path.exists('telegram.conf'):
+        chat_ids = get_chat_ids()
+        if chat_ids:
             bot = telegram.Bot(token="8070858648:AAGfrK1u0IaiXjr4f8TRbUDD92uBGTXdt38")
-            bot.send_message(chat_id=open('telegram.conf', 'r').read().strip().split('=')[1], text=f"{account_info['name']} OP -> UNI 跨链成功！")
+            for chat_id in chat_ids:
+                try:
+                    bot.send_message(chat_id=chat_id, text=f"{account_info['name']} OP -> UNI 跨链成功！")
+                    logger.info(f"通知发送成功到 {chat_id}")
+                except Exception as e:
+                    logger.error(f"通知发送失败到 {chat_id}: {e}")
         return True
     except Exception as e:
         logger.error(f"{account_info['name']} OP -> UNI 失败: {e}")
@@ -203,9 +232,15 @@ def bridge_uni_to_op(account_info: Dict) -> bool:
         total_success_count += 1
         account_info["uni_to_op_last"] = current_time
         logger.info(f"{LIGHT_RED}{account_info['name']} UNI -> OP 成功{RESET}")
-        if os.path.exists('telegram.conf'):
+        chat_ids = get_chat_ids()
+        if chat_ids:
             bot = telegram.Bot(token="8070858648:AAGfrK1u0IaiXjr4f8TRbUDD92uBGTXdt38")
-            bot.send_message(chat_id=open('telegram.conf', 'r').read().strip().split('=')[1], text=f"{account_info['name']} UNI -> OP 跨链成功！")
+            for chat_id in chat_ids:
+                try:
+                    bot.send_message(chat_id=chat_id, text=f"{account_info['name']} UNI -> OP 跨链成功！")
+                    logger.info(f"通知发送成功到 {chat_id}")
+                except Exception as e:
+                    logger.error(f"通知发送失败到 {chat_id}: {e}")
         return True
     except Exception as e:
         logger.error(f"{account_info['name']} UNI -> OP 失败: {e}")
@@ -215,13 +250,15 @@ def bridge_uni_to_op(account_info: Dict) -> bool:
 def process_account(account_info: Dict):
     direction = open("direction.conf", "r").read().strip()
     while True:
-        if direction == "op_to_uni" or direction == "both":
+        if direction == "op_to_uni":
             bridge_op_to_uni(account_info)
-        if direction == "uni_to_op" or direction == "both":
             bridge_uni_to_op(account_info)
 
 # 主函数
 def main():
+    if not accounts:
+        logger.error("没有可用的账户，退出程序")
+        return
     logger.info(f"开始为 {len(accounts)} 个账户执行 OP-UNI 无限循环跨链，每次 {AMOUNT_ETH} ETH")
     with ThreadPoolExecutor(max_workers=min(len(accounts), 30)) as executor:
         executor.map(process_account, accounts)
