@@ -14,6 +14,7 @@ CONFIG_FILE="accounts.json"
 DIRECTION_FILE="direction.conf"
 TELEGRAM_CONFIG="telegram.conf"
 PYTHON_VERSION="3.8"
+PM2_PROCESS_NAME="bridge-bot"
 
 # === 横幅 ===
 banner() {
@@ -55,6 +56,17 @@ install_dependencies() {
             echo -e "${RED}无法安装 Python ${PYTHON_VERSION}${NC}"
             exit 1
         }
+    }
+
+    # 安装 Node.js 和 PM2
+    if ! command -v pm2 &> /dev/null; then
+        echo -e "${CYAN}安装 Node.js 和 PM2...${NC}"
+        curl -sL https://deb.nodesource.com/setup_16.x | bash -
+        apt-get install -y nodejs || yum install -y nodejs || {
+            echo -e "${RED}无法安装 Node.js${NC}"
+            exit 1
+        }
+        npm install -g pm2
     fi
 
     # 安装 Python 依赖
@@ -67,13 +79,19 @@ install_dependencies() {
     echo -e "${GREEN}所有依赖安装完成！${NC}"
 }
 
-# === 检查 Python 脚本是否存在 ===
-check_python_scripts() {
-    if [ ! -f "$ARB_SCRIPT" ] || [ ! -f "$OP_SCRIPT" ]; then
-        echo -e "${RED}错误：未找到 $ARB_SCRIPT 或 $OP_SCRIPT！请确保脚本存在！${NC}"
+# === 下载 Python 脚本 ===
+download_python_scripts() {
+    echo -e "${CYAN}下载 Python 脚本...${NC}"
+    wget -O "$ARB_SCRIPT" https://raw.githubusercontent.com/your-repo/bridge-bot/main/uni-arb.py || {
+        echo -e "${RED}无法下载 $ARB_SCRIPT${NC}"
         exit 1
-    fi
+    }
+    wget -O "$OP_SCRIPT" https://raw.githubusercontent.com/your-repo/bridge-bot/main/op-uni.py || {
+        echo -e "${RED}无法下载 $OP_SCRIPT${NC}"
+        exit 1
+    }
     chmod +x "$ARB_SCRIPT" "$OP_SCRIPT"
+    echo -e "${GREEN}Python 脚本下载完成！${NC}"
 }
 
 # === 初始化配置文件 ===
@@ -177,15 +195,6 @@ configure_telegram() {
     fi
     echo "chat_id=$chat_id" > "$TELEGRAM_CONFIG"
     echo -e "${GREEN}Telegram 通知已配置！${NC}"
-
-    # 为 ARB -> UNI 脚本添加 Telegram 通知
-    if ! grep -q "import telegram" "$ARB_SCRIPT"; then
-        sed -i '1s|^|import telegram\nimport os\n|' "$ARB_SCRIPT"
-        sed -i "/logger.info(f\"{LIGHT_RED}{account_info\['name'\]} ARB -> UNI 成功{RESET}\")/a\        if os.path.exists('$TELEGRAM_CONFIG'):\n            bot = telegram.Bot(token='$BOT_TOKEN')\n            bot.send_message(chat_id=open('$TELEGRAM_CONFIG', 'r').read().strip().split('=')[1], text=f\"{account_info['name']} ARB -> UNI 跨链成功！\")" "$ARB_SCRIPT"
-        echo -e "${GREEN}已为 $ARB_SCRIPT 添加 Telegram 通知！${NC}"
-    fi
-
-    # 为 OP <-> UNI 脚本添加 Telegram 通知（已在脚本中内置）
 }
 
 # === 删除脚本 ===
@@ -194,6 +203,8 @@ delete_script() {
     echo -e "${CYAN}是否继续？(y/n)${NC}"
     read -p "> " confirm
     if [ "$confirm" = "y" ] || [ "$confirm" = "Y" ]; then
+        pm2 stop "$PM2_PROCESS_NAME" >/dev/null 2>&1
+        pm2 delete "$PM2_PROCESS_NAME" >/dev/null 2>&1
         rm -f "$ARB_SCRIPT" "$OP_SCRIPT" "$CONFIG_FILE" "$DIRECTION_FILE" "$TELEGRAM_CONFIG" "$0"
         echo -e "${GREEN}所有脚本和配置文件已删除！${NC}"
         exit 0
@@ -202,7 +213,7 @@ delete_script() {
     fi
 }
 
-# === 启动跨链脚本 ===
+# === 使用 PM2 启动跨链脚本 ===
 start_bridge() {
     accounts=$(read_accounts)
     if [ "$(echo "$accounts" | jq length)" -eq 0 ]; then
@@ -210,14 +221,16 @@ start_bridge() {
         return
     fi
     direction=$(cat "$DIRECTION_FILE")
-    echo -e "${CYAN}正在启动跨链脚本...${NC}"
+    echo -e "${CYAN}正在使用 PM2 启动跨链脚本...${NC}"
+    pm2 stop "$PM2_PROCESS_NAME" >/dev/null 2>&1
+    pm2 delete "$PM2_PROCESS_NAME" >/dev/null 2>&1
     if [ "$direction" = "arb_to_uni" ]; then
-        python3 "$ARB_SCRIPT" &
+        pm2 start "$ARB_SCRIPT" --name "$PM2_PROCESS_NAME" --interpreter python3
     else
-        python3 "$OP_SCRIPT" &
+        pm2 start "$OP_SCRIPT" --name "$PM2_PROCESS_NAME" --interpreter python3
     fi
-    echo -e "${GREEN}跨链脚本已启动！按 Ctrl+C 停止。${NC}"
-    wait
+    pm2 save
+    echo -e "${GREEN}跨链脚本已通过 PM2 启动！使用 'pm2 logs $PM2_PROCESS_NAME' 查看日志，或 'pm2 stop $PM2_PROCESS_NAME' 停止。${NC}"
 }
 
 # === 主菜单 ===
@@ -266,6 +279,6 @@ main_menu() {
 # === 主程序 ===
 check_root
 install_dependencies
-check_python_scripts
+download_python_scripts
 init_config
 main_menu
