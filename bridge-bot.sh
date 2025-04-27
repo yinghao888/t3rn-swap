@@ -41,7 +41,7 @@ check_root() {
     fi
 }
 
-# === 发送 Telegram 通知（不显示） ===
+# === 发送 Telegram 通知 ===
 send_telegram_notification() {
     local message="$1"
     local telegram_config=$(read_telegram_ids)
