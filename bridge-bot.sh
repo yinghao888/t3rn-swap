@@ -2,7 +2,7 @@
 
 # === 颜色定义 ===
 RED='\033[0;31m'
-GREEN='\033[0;32m'
+GREEN='\033[0;32 m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
@@ -43,13 +43,21 @@ install_dependencies() {
     echo -e "${CYAN}正在安装必要的依赖...${NC}"
     
     # 更新包列表
-    if ! apt-get update -y && ! yum update -y; then
+    if apt-get update -y; then
+        echo -e "${GREEN}apt-get 更新成功${NC}"
+    elif yum update -y; then
+        echo -e "${GREEN}yum 更新成功${NC}"
+    else
         echo -e "${RED}无法更新包列表，请检查包管理器${NC}"
         exit 1
     fi
 
     # 安装基本工具
-    if ! apt-get install -y curl wget jq python3 python3-pip && ! yum install -y curl wget jq python3 python3-pip; then
+    if apt-get install -y curl wget jq python3 python3-pip; then
+        echo -e "${GREEN}apt-get 安装基本工具成功${NC}"
+    elif yum install -y curl wget jq python3 python3-pip; then
+        echo -e "${GREEN}yum 安装基本工具成功${NC}"
+    else
         echo -e "${RED}无法安装基本工具，请检查包管理器${NC}"
         exit 1
     fi
@@ -57,7 +65,11 @@ install_dependencies() {
     # 确保 Python 版本
     if ! command -v python${PYTHON_VERSION} >/dev/null 2>&1; then
         echo -e "${CYAN}安装 Python ${PYTHON_VERSION}...${NC}"
-        if ! apt-get install -y python${PYTHON_VERSION} python${PYTHON_VERSION}-dev && ! yum install -y python${PYTHON_VERSION} python${PYTHON_VERSION}-devel; then
+        if apt-get install -y python${PYTHON_VERSION} python${PYTHON_VERSION}-dev; then
+            echo -e "${GREEN}apt-get 安装 Python ${PYTHON_VERSION} 成功${NC}"
+        elif yum install -y python${PYTHON_VERSION} python${PYTHON_VERSION}-devel; then
+            echo -e "${GREEN}yum 安装 Python ${PYTHON_VERSION} 成功${NC}"
+        else
             echo -e "${RED}无法安装 Python ${PYTHON_VERSION}${NC}"
             exit 1
         fi
@@ -67,7 +79,11 @@ install_dependencies() {
     if ! command -v pm2 >/dev/null 2>&1; then
         echo -e "${CYAN}安装 Node.js 和 PM2...${NC}"
         curl -sL https://deb.nodesource.com/setup_16.x | bash -
-        if ! apt-get install -y nodejs && ! yum install -y nodejs; then
+        if apt-get install -y nodejs; then
+            echo -e "${GREEN}apt-get 安装 Node.js 成功${NC}"
+        elif yum install -y nodejs; then
+            echo -e "${GREEN}yum 安装 Node.js 成功${NC}"
+        else
             echo -e "${RED}无法安装 Node.js${NC}"
             exit 1
         fi
@@ -76,7 +92,9 @@ install_dependencies() {
 
     # 安装 Python 依赖
     pip3 install --upgrade pip
-    if ! pip3 install web3 python-telegram-bot[all] jq; then
+    if pip3 install web3 python-telegram-bot[all] jq; then
+        echo -e "${GREEN}Python 依赖安装成功${NC}"
+    else
         echo -e "${RED}无法安装 Python 依赖${NC}"
         exit 1
     fi
