@@ -161,7 +161,7 @@ add_private_key() {
     fi
     accounts_json=$(echo "$accounts" | jq -c '.')
     for entry in "${new_accounts[@]}"; do
-        accounts_json=$(echo "$accounts_json" | jq -c ". + [$entry]")
+        accounts_json=$(echo "$accounts_json $entry" | jq -s '.[0] + [.[1]]' | jq -c '.')
     done
     echo "$accounts_json" > "$CONFIG_FILE"
     if ! jq -e . "$CONFIG_FILE" >/dev/null 2>&1; then
@@ -366,18 +366,27 @@ manage_telegram() {
 update_python_accounts() {
     accounts=$(read_accounts)
     accounts_str=$(echo "$accounts" | jq -r '[.[] | {"private_key": .private_key, "name": .name}]' | sed 's/"/\\"/g')
+    if [ -z "$accounts_str" ] || [ "$accounts_str" == "[]" ]; then
+        accounts_str="[]"
+    fi
     sed -i "s|ACCOUNTS = \[.*\]|ACCOUNTS = $accounts_str|" "$ARB_SCRIPT"
     sed -i "s|ACCOUNTS = \[.*\]|ACCOUNTS = $accounts_str|" "$OP_SCRIPT"
     echo -e "${GREEN}已更新 $ARB_SCRIPT 和 $OP_SCRIPT${NC}"
+    echo -e "${CYAN}当前 $ARB_SCRIPT ACCOUNTS 内容：${NC}"
+    grep "ACCOUNTS =" "$ARB_SCRIPT"
+    echo -e "${CYAN}当前 $OP_SCRIPT ACCOUNTS 内容：${NC}"
+    grep "ACCOUNTS =" "$OP_SCRIPT"
 }
 
 # === 配置跨链方向 ===
 select_direction() {
     echo -e "${CYAN}请选择跨链方向：${NC}"
     echo "1. ARB -> UNI"
+    echo "2. OP <-> UNI"
     read -p "> " choice
     case $choice in
         1) echo "arb_to_uni" > "$DIRECTION_FILE"; echo -e "${GREEN}设置为 ARB -> UNI${NC}" ;;
+        2) echo "op_to_uni" > "$DIRECTION_FILE"; echo -e "${GREEN}设置为 OP <-> UNI${NC}" ;;
         *) echo -e "${RED}无效选项，默认 ARB -> UNI${NC}"; echo "arb_to_uni" > "$DIRECTION_FILE" ;;
     esac
 }
