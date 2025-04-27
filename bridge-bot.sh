@@ -434,7 +434,14 @@ start_bridge() {
     direction=$(cat "$DIRECTION_FILE")
     pm2 stop "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >/dev/null 2>&1
     pm2 delete "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >/dev/null 2>&1
-    [ "$direction" = "arb_to_uni" ] && pm2 start "$ARB_SCRIPT" --name "$PM2_PROCESS_NAME" --interpreter python3 || pm2 start "$OP_SCRIPT" --name "$PM2_PROCESS_NAME" --interpreter python3
+    if [ "$direction" = "arb_to_uni" ]; then
+        pm2 start "$ARB_SCRIPT" --name "$PM2_PROCESS_NAME" --interpreter python3
+    elif [ "$direction" = "op_to_uni" ]; then
+        pm2 start "$OP_SCRIPT" --name "$PM2_PROCESS_NAME" --interpreter python3
+    else
+        echo -e "${RED}无效的跨链方向：$direction，默认使用 ARB -> UNI${NC}"
+        pm2 start "$ARB_SCRIPT" --name "$PM2_PROCESS_NAME" --interpreter python3
+    fi
     pm2 start "$BALANCE_SCRIPT" --name "$PM2_BALANCE_NAME" --interpreter python3
     pm2 save
     echo -e "${GREEN}脚本已启动！使用 '5. 查看日志' 查看运行状态${NC}"
