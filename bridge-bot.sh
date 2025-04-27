@@ -92,6 +92,7 @@ download_python_scripts() {
 init_config() {
     [ ! -f "$CONFIG_FILE" ] && echo '[]' > "$CONFIG_FILE" && echo -e "${GREEN}创建 $CONFIG_FILE${NC}"
     [ ! -f "$DIRECTION_FILE" ] && echo "arb_to_uni" > "$DIRECTION_FILE" && echo -e "${GREEN}默认方向: ARB -> UNI${NC}"
+    [ ! -f "$TELEGRAM_CONFIG" ] && echo '{"chat_ids": []}' > "$TELEGRAM_CONFIG" && echo -e "${GREEN}创建 $TELEGRAM_CONFIG${NC}"
 }
 
 # === 读取账户 ===
@@ -107,6 +108,21 @@ read_accounts() {
         return
     fi
     cat "$CONFIG_FILE"
+}
+
+# === 读取 Telegram IDs ===
+read_telegram_ids() {
+    if [ ! -f "$TELEGRAM_CONFIG" ] || [ ! -s "$TELEGRAM_CONFIG" ]; then
+        echo '{"chat_ids": []}'
+        return
+    fi
+    if ! jq -e . "$TELEGRAM_CONFIG" >/dev/null 2>&1; then
+        echo -e "${RED}警告：$TELEGRAM_CONFIG 格式无效，重置为空列表${NC}"
+        echo '{"chat_ids": []}' > "$TELEGRAM_CONFIG"
+        echo '{"chat_ids": []}'
+        return
+    fi
+    cat "$TELEGRAM_CONFIG"
 }
 
 # === 添加私钥 ===
@@ -230,6 +246,122 @@ view_private_keys() {
     fi
 }
 
+# === 添加 Telegram ID ===
+add_telegram_id() {
+    echo -e "${CYAN}请输入 Telegram 用户 ID（纯数字，例如 5963704377）：${NC}"
+    echo -e "${CYAN}请先关注 @t3rntz_bot 机器人以接收通知！${NC}"
+    read -p "> " chat_id
+    if [[ ! "$chat_id" =~ ^[0-9]+$ ]]; then
+        echo -e "${RED}无效 ID，必须为纯数字！${NC}"
+        return
+    fi
+    telegram_config=$(read_telegram_ids)
+    temp_file=$(mktemp)
+    echo "$telegram_config" > "$temp_file"
+    if echo "$telegram_config" | jq -e ".chat_ids | index(\"$chat_id\")" >/dev/null 2>&1; then
+        echo -e "${RED}ID $chat_id 已存在，跳过${NC}"
+        rm "$temp_file"
+        return
+    fi
+    new_config=$(echo "$telegram_config" | jq -c ".chat_ids += [\"$chat_id\"]")
+    echo "$new_config" > "$TELEGRAM_CONFIG"
+    if ! jq -e . "$TELEGRAM_CONFIG" >/dev/null 2>&1; then
+        echo -e "${RED}错误：写入 $TELEGRAM_CONFIG 失败，恢复原始内容${NC}"
+        mv "$temp_file" "$TELEGRAM_CONFIG"
+        return
+    fi
+    rm "$temp_file"
+    echo -e "${GREEN}已添加 Telegram ID: $chat_id${NC}"
+    echo -e "${CYAN}当前 telegram.conf 内容：${NC}"
+    cat "$TELEGRAM_CONFIG"
+}
+
+# === 删除 Telegram ID ===
+delete_telegram_id() {
+    telegram_config=$(read_telegram_ids)
+    count=$(echo "$telegram_config" | jq '.chat_ids | length')
+    if [ "$count" -eq 0 ]; then
+        echo -e "${RED}Telegram ID 列表为空！${NC}"
+        return
+    fi
+    echo -e "${CYAN}当前 Telegram ID 列表：${NC}"
+    ids_list=()
+    i=1
+    while IFS= read -r id; do
+        if [ -n "$id" ]; then
+            ids_list+=("$id")
+            echo "$i. $id"
+            i=$((i + 1))
+        fi
+    done < <(echo "$telegram_config" | jq -r '.chat_ids[]')
+    if [ ${#ids_list[@]} -eq 0 ]; then
+        echo -e "${RED}Telegram ID 列表为空！${NC}"
+        return
+    fi
+    echo -e "${CYAN}请输入要删除的 ID 编号（或 0 取消）：${NC}"
+    read -p "> " index
+    [ "$index" -eq 0 ] && return
+    if [ -z "$index" ] || [ "$index" -le 0 ] || [ "$index" -gt "${#ids_list[@]}" ]; then
+        echo -e "${RED}无效编号！${NC}"
+        return
+    fi
+    temp_file=$(mktemp)
+    echo "$telegram_config" > "$temp_file"
+    new_config=$(echo "$telegram_config" | jq -c "del(.chat_ids[$((index-1))])")
+    echo "$new_config" > "$TELEGRAM_CONFIG"
+    if ! jq -e . "$TELEGRAM_CONFIG" >/dev/null 2>&1; then
+        echo -e "${RED}错误：写入 $TELEGRAM_CONFIG 失败，恢复原始内容${NC}"
+        mv "$temp_file" "$TELEGRAM_CONFIG"
+        return
+    fi
+    rm "$temp_file"
+    echo -e "${GREEN}已删除 Telegram ID！${NC}"
+    echo -e "${CYAN}当前 telegram.conf 内容：${NC}"
+    cat "$TELEGRAM_CONFIG"
+}
+
+# === 查看 Telegram IDs ===
+view_telegram_ids() {
+    telegram_config=$(read_telegram_ids)
+    count=$(echo "$telegram_config" | jq '.chat_ids | length')
+    if [ "$count" -eq 0 ]; then
+        echo -e "${RED}Telegram ID 列表为空！${NC}"
+        return
+    fi
+    echo -e "${CYAN}当前 Telegram ID 列表：${NC}"
+    i=1
+    while IFS= read -r id; do
+        if [ -n "$id" ]; then
+            echo "$i. $id"
+            i=$((i + 1))
+        fi
+    done < <(echo "$telegram_config" | jq -r '.chat_ids[]')
+    if [ $i -eq 1 ]; then
+        echo -e "${RED}Telegram ID 列表为空！${NC}"
+    fi
+}
+
+# === 管理 Telegram IDs ===
+manage_telegram() {
+    while true; do
+        banner
+        echo -e "${CYAN}Telegram ID 管理：${NC}"
+        echo "1. 添加 Telegram ID"
+        echo "2. 删除 Telegram ID"
+        echo "3. 查看 Telegram ID"
+        echo "4. 返回"
+        read -p "> " sub_choice
+        case $sub_choice in
+            1) add_telegram_id ;;
+            2) delete_telegram_id ;;
+            3) view_telegram_ids ;;
+            4) break ;;
+            *) echo -e "${RED}无效选项！${NC}" ;;
+        esac
+        read -p "按回车继续..."
+    done
+}
+
 # === 更新 Python 脚本账户 ===
 update_python_accounts() {
     accounts=$(read_accounts)
@@ -239,26 +371,15 @@ update_python_accounts() {
     echo -e "${GREEN}已更新 $ARB_SCRIPT 和 $OP_SCRIPT${NC}"
 }
 
-# === 选择跨链方向 ===
+# === 配置跨链方向 ===
 select_direction() {
     echo -e "${CYAN}请选择跨链方向：${NC}"
     echo "1. ARB -> UNI"
-    echo "2. OP <-> UNI (双向)"
     read -p "> " choice
     case $choice in
         1) echo "arb_to_uni" > "$DIRECTION_FILE"; echo -e "${GREEN}设置为 ARB -> UNI${NC}" ;;
-        2) echo "both" > "$DIRECTION_FILE"; echo -e "${GREEN}设置为 OP <-> UNI${NC}" ;;
         *) echo -e "${RED}无效选项，默认 ARB -> UNI${NC}"; echo "arb_to_uni" > "$DIRECTION_FILE" ;;
     esac
-}
-
-# === 配置 Telegram ===
-configure_telegram() {
-    echo -e "${CYAN}请输入 Telegram 用户 ID：${NC}"
-    read -p "> " chat_id
-    [[ ! "$chat_id" =~ ^[0-9]+$ ]] && { echo -e "${RED}无效 ID！${NC}"; return; }
-    echo "chat_id=$chat_id" > "$TELEGRAM_CONFIG"
-    echo -e "${GREEN}Telegram 配置完成！${NC}"
 }
 
 # === 查看日志 ===
@@ -266,6 +387,14 @@ view_logs() {
     echo -e "${CYAN}显示 PM2 日志...${NC}"
     pm2 logs --lines 50
     echo -e "${CYAN}日志显示完成，按回车返回${NC}"
+}
+
+# === 停止运行 ===
+stop_running() {
+    echo -e "${CYAN}正在停止跨链脚本和余额查询...${NC}"
+    pm2 stop "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >/dev/null 2>&1
+    pm2 delete "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >/dev/null 2>&1
+    echo -e "${GREEN}已停止所有脚本！${NC}"
 }
 
 # === 删除脚本 ===
@@ -288,6 +417,11 @@ start_bridge() {
         echo -e "${RED}请先添加账户！${NC}"
         return
     fi
+    telegram_config=$(read_telegram_ids)
+    if [ "$(echo "$telegram_config" | jq '.chat_ids | length')" -eq 0 ]; then
+        echo -e "${RED}请先配置 Telegram ID！${NC}"
+        return
+    fi
     direction=$(cat "$DIRECTION_FILE")
     pm2 stop "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >/dev/null 2>&1
     pm2 delete "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >/dev/null 2>&1
@@ -307,11 +441,12 @@ main_menu() {
         echo "3. 配置跨链方向"
         echo "4. 启动跨链脚本"
         echo "5. 查看日志"
-        echo "6. 删除脚本"
-        echo "7. 退出"
+        echo "6. 停止运行"
+        echo "7. 删除脚本"
+        echo "8. 退出"
         read -p "> " choice
         case $choice in
-            1) configure_telegram ;;
+            1) manage_telegram ;;
             2)
                 while true; do
                     banner
@@ -334,8 +469,9 @@ main_menu() {
             3) select_direction ;;
             4) start_bridge ;;
             5) view_logs ;;
-            6) delete_script ;;
-            7) echo -e "${GREEN}退出！${NC}"; exit 0 ;;
+            6) stop_running ;;
+            7) delete_script ;;
+            8) echo -e "${GREEN}退出！${NC}"; exit 0 ;;
             *) echo -e "${RED}无效选项！${NC}" ;;
         esac
         read -p "按回车继续..."
