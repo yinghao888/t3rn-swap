@@ -9,12 +9,14 @@ NC='\033[0m' # No Color
 # === 脚本路径和配置 ===
 ARB_SCRIPT="uni-arb.py"
 OP_SCRIPT="op-uni.py"
+BALANCE_SCRIPT="balance-notifier.py"
 BOT_TOKEN="8070858648:AAGfrK1u0IaiXjr4f8TRbUDD92uBGTXdt38"
 CONFIG_FILE="accounts.json"
 DIRECTION_FILE="direction.conf"
 TELEGRAM_CONFIG="telegram.conf"
 PYTHON_VERSION="3.8"
 PM2_PROCESS_NAME="bridge-bot"
+PM2_BALANCE_NAME="balance-notifier"
 
 # === 横幅 ===
 banner() {
@@ -73,7 +75,73 @@ install_dependencies() {
     fi
 
     # 安装 Python 依赖
- = 0 ]; then
+    pip3 install --upgrade pip
+    pip3 install web3 python-telegram-bot[all] jq || {
+        echo -e "${RED}无法安装 Python 依赖${NC}"
+        exit 1
+    }
+
+    echo -e "${GREEN}所有依赖安装完成！${NC}"
+}
+
+# === 下载 Python 脚本 ===
+download_python_scripts() {
+    echo -e "${CYAN}下载 Python 脚本...${NC}"
+    wget -O "$ARB_SCRIPT" https://raw.githubusercontent.com/yinghao888/t3rn-swap/main/uni-arb.py || {
+        echo -e "${RED}无法下载 $ARB_SCRIPT${NC}"
+        exit 1
+    }
+    wget -O "$OP_SCRIPT" https://raw.githubusercontent.com/yinghao888/t3rn-swap/main/op-uni.py || {
+        echo -e "${RED}无法下载 $OP_SCRIPT${NC}"
+        exit 1
+    }
+    wget -O "$BALANCE_SCRIPT" https://raw.githubusercontent.com/yinghao888/t3rn-swap/main/balance-notifier.py || {
+        echo -e "${RED}无法下载 $BALANCE_SCRIPT${NC}"
+        exit 1
+    }
+    chmod +x "$ARB_SCRIPT" "$OP_SCRIPT" "$BALANCE_SCRIPT"
+    echo -e "${GREEN}Python 脚本下载完成！${NC}"
+}
+
+# === 初始化配置文件 ===
+init_config() {
+    if [ ! -f "$CONFIG_FILE" ]; then
+        echo '[]' > "$CONFIG_FILE"
+        echo -e "${GREEN}已创建空的账户配置文件: $CONFIG_FILE${NC}"
+    fi
+    if [ ! -f "$DIRECTION_FILE" ]; then
+        echo "arb_to_uni" > "$DIRECTION_FILE"
+        echo -e "${GREEN}默认跨链方向: ARB -> UNI${NC}"
+    fi
+}
+
+# === 读取私钥 ===
+read_accounts() {
+    jq -r '.' "$CONFIG_FILE" 2>/dev/null || echo '[]'
+}
+
+# === 添加私钥 ===
+add_private_key() {
+    echo -e "${CYAN}请输入账户名称（如 Account1）：${NC}"
+    read -p "> " name
+    echo -e "${CYAN}请输入私钥（以 0x 开头）：${NC}"
+    read -p "> " private_key
+    if [[ ! "$private_key" =~ ^0x[0-9a-fA-F]{64}$ ]]; then
+        echo -e "${RED}错误：无效的私钥格式！${NC}"
+        return
+    fi
+    accounts=$(read_accounts)
+    new_account=$(jq -n --arg name "$name" --arg key "$private_key" '[{"name": $name, "private_key": $key}]')
+    updated_accounts=$(echo "$accounts $new_account" | jq -s '.[0] + .[1] | unique_by(.name)')
+    echo "$updated_accounts" > "$CONFIG_FILE"
+    update_python_accounts
+    echo -e "${GREEN}已添加账户: $name${NC}"
+}
+
+# === 删除私钥 ===
+delete_private_key() {
+    accounts=$(read_accounts)
+    if [ "$(echo "$accounts" | jq length)" -eq 0 ]; then
         echo -e "${RED}错误：账户列表为空！${NC}"
         return
     fi
@@ -146,7 +214,9 @@ delete_script() {
     if [ "$confirm" = "y" ] || [ "$confirm" = "Y" ]; then
         pm2 stop "$PM2_PROCESS_NAME" >/dev/null 2>&1
         pm2 delete "$PM2_PROCESS_NAME" >/dev/null 2>&1
-        rm -f "$ARB_SCRIPT" "$OP_SCRIPT" "$CONFIG_FILE" "$DIRECTION_FILE" "$TELEGRAM_CONFIG" "$0"
+        pm2 stop "$PM2_BALANCE_NAME" >/dev/null 2>&1
+        pm2 delete "$PM2_BALANCE_NAME" >/dev/null 2>&1
+        rm -f "$ARB_SCRIPT" "$OP_SCRIPT" "$BALANCE_SCRIPT" "$CONFIG_FILE" "$DIRECTION_FILE" "$TELEGRAM_CONFIG" "$0"
         echo -e "${GREEN}所有脚本和配置文件已删除！${NC}"
         exit 0
     else
@@ -154,24 +224,29 @@ delete_script() {
     fi
 }
 
-# === 使用 PM2 启动跨链脚本 ===
+# === 使用 PM2 启动跨链脚本和余额查询脚本 ===
 start_bridge() {
     accounts=$(read_accounts)
     if [ "$(echo "$accounts" | jq length)" -eq 0 ]; then
         echo -e "${RED}错误：请先添加至少一个账户！${NC}"
         return
     fi
+威力
+
     direction=$(cat "$DIRECTION_FILE")
-    echo -e "${CYAN}正在使用 PM2 启动跨链脚本...${NC}"
+    echo -e "${CYAN}正在使用 PM2 启动跨链脚本和余额查询脚本...${NC}"
     pm2 stop "$PM2_PROCESS_NAME" >/dev/null 2>&1
     pm2 delete "$PM2_PROCESS_NAME" >/dev/null 2>&1
+    pm2 stop "$PM2_BALANCE_NAME" >/dev/null 2>&1
+    pm2 delete "$PM2_BALANCE_NAME" >/dev/null 2>&1
     if [ "$direction" = "arb_to_uni" ]; then
         pm2 start "$ARB_SCRIPT" --name "$PM2_PROCESS_NAME" --interpreter python3
     else
         pm2 start "$OP_SCRIPT" --name "$PM2_PROCESS_NAME" --interpreter python3
     fi
+    pm2 start "$BALANCE_SCRIPT" --name "$PM2_BALANCE_NAME" --interpreter python3
     pm2 save
-    echo -e "${GREEN}跨链脚本已通过 PM2 启动！使用 'pm2 logs $PM2_PROCESS_NAME' 查看日志，或 'pm2 stop $PM2_PROCESS_NAME' 停止。${NC}"
+    echo -e "${GREEN}跨链脚本和余额查询脚本已通过 PM2 启动！使用 'pm2 logs $PM2_PROCESS_NAME' 查看跨链日志，或 'pm2 logs $PM2_BALANCE_NAME' 查看余额日志，或 'pm2 stop $PM2_PROCESS_NAME' 和 'pm2 stop $PM2_BALANCE_NAME' 停止。${NC}"
 }
 
 # === 主菜单 ===
@@ -183,7 +258,7 @@ main_menu() {
         echo "2. 选择跨链方向"
         echo "3. 开启 Telegram 通知"
         echo "4. 删除脚本"
-        echo "5. 启动跨链脚本"
+        echo "5. 启动跨链脚本和余额查询"
         echo "6. 退出"
         echo -e "${CYAN}请输入选项（1-6）：${NC}"
         read -p "> " choice
