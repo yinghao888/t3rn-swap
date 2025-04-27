@@ -104,7 +104,7 @@ add_private_key() {
     else
         new_accounts="$accounts"
     fi
-    count=$(grep -o '"name":' "$CONFIG_FILE" | wc -l)
+    count=$(echo "$accounts" | grep -o '"name":' | wc -l)
     for key in "${keys[@]}"; do
         key=$(echo "$key" | tr -d '[:space:]')
         key=${key#0x}
@@ -130,28 +130,41 @@ add_private_key() {
 # === 删除私钥 ===
 delete_private_key() {
     accounts=$(read_accounts)
-    count=$(echo "$accounts" | grep -o '"name":' | wc -l)
-    if [ "$count" -eq 0 ]; then
+    if [ "$accounts" == "[]" ]; then
         echo -e "${RED}账户列表为空！${NC}"
         return
     fi
     echo -e "${CYAN}当前账户列表：${NC}"
     i=1
+    accounts_list=()
     while IFS= read -r line; do
         name=$(echo "$line" | grep -o '"name": "[^"]*"' | cut -d'"' -f4)
         key=$(echo "$line" | grep -o '"private_key": "[^"]*"' | cut -d'"' -f4)
-        [ -n "$name" ] && echo "$i. $name (${key:0:10}...)"
-        i=$((i + 1))
+        if [ -n "$name" ] && [ -n "$key" ]; then
+            accounts_list+=("$line")
+            echo "$i. $name (${key:0:10}...)"
+            i=$((i + 1))
+        fi
     done <<< "$(echo "$accounts" | tr '[]' '\n' | tr ',' '\n')"
+    if [ ${#accounts_list[@]} -eq 0 ]; then
+        echo -e "${RED}账户列表为空！${NC}"
+        return
+    fi
     echo -e "${CYAN}请输入要删除的账户编号（或 0 取消）：${NC}"
     read -p "> " index
     [ "$index" -eq 0 ] && return
-    if [ -z "$index" ] || [ "$index" -le 0 ] || [ "$index" -gt "$count" ]; then
+    if [ -z "$index" ] || [ "$index" -le 0 ] || [ "$index" -gt "${#accounts_list[@]}" ]; then
         echo -e "${RED}无效编号！${NC}"
         return
     fi
-    new_accounts=$(echo "$accounts" | awk -v idx="$index" 'BEGIN{RS="},{";ORS="},{"}NR!=idx{print $0}' | sed 's/},{/}, {/g')
-    new_accounts="[${new_accounts}]"
+    new_accounts="["
+    for ((j=0; j<${#accounts_list[@]}; j++)); do
+        if [ $((j+1)) -ne "$index" ]; then
+            [ "$new_accounts" != "[" ] && new_accounts+=","
+            new_accounts+="${accounts_list[$j]}"
+        fi
+    done
+    new_accounts="$new_accounts]"
     echo "$new_accounts" > "$CONFIG_FILE"
     update_python_accounts
     echo -e "${GREEN}已删除账户！${NC}"
@@ -204,7 +217,10 @@ delete_script() {
 # === 启动跨链脚本 ===
 start_bridge() {
     accounts=$(read_accounts)
-    [ "$(echo "$accounts" | grep -o '"name":' | wc -l)" -eq 0 ] && { echo -e "${RED}请先添加账户！${NC}"; return; }
+    if [ "$accounts" == "[]" ]; then
+        echo -e "${RED}请先添加账户！${NC}"
+        return
+    fi
     direction=$(cat "$DIRECTION_FILE")
     pm2 stop "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >/dev/null 2>&1
     pm2 delete "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >/dev/null 2>&1
@@ -219,15 +235,21 @@ main_menu() {
     while true; do
         banner
         echo -e "${CYAN}请选择操作：${NC}"
-        echo "1. 管理私钥  2. 选择跨链方向  3. 配置 Telegram"
-        echo "4. 删除脚本  5. 启动跨链脚本  6. 退出"
+        echo "1. 管理私钥"
+        echo "2. 选择跨链方向"
+        echo "3. 配置 Telegram"
+        echo "4. 删除脚本"
+        echo "5. 启动跨链脚本"
+        echo "6. 退出"
         read -p "> " choice
         case $choice in
             1)
                 while true; do
                     banner
                     echo -e "${CYAN}私钥管理：${NC}"
-                    echo "1. 添加私钥  2. 删除私钥  3. 返回"
+                    echo "1. 添加私钥"
+                    echo "2. 删除私钥"
+                    echo "3. 返回"
                     read -p "> " sub_choice
                     case $sub_choice in
                         1) add_private_key ;;
