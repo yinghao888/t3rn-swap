@@ -12,13 +12,25 @@ TELEGRAM_CONFIG = "telegram.conf"
 CALDERA_RPC_URL = "https://b2n.rpc.caldera.xyz/http"
 SYMBOL = "BRN"
 
-# 读取 Telegram Chat ID
-def get_chat_id():
+# 读取 Telegram Chat IDs
+def get_chat_ids():
     if not os.path.exists(TELEGRAM_CONFIG):
         print("警告：未配置 Telegram 用户 ID，请在 bridge-bot.sh 中选择 '1. 配置 Telegram' 输入 ID")
-        return None
-    with open(TELEGRAM_CONFIG, 'r') as f:
-        return f.read().strip().split('=')[1]
+        return []
+    try:
+        with open(TELEGRAM_CONFIG, 'r') as f:
+            config = json.load(f)
+        if not isinstance(config, dict) or 'chat_ids' not in config or not isinstance(config['chat_ids'], list):
+            print("错误：telegram.conf 格式无效，重置为空列表")
+            with open(TELEGRAM_CONFIG, 'w') as f:
+                json.dump({"chat_ids": []}, f)
+            return []
+        return config['chat_ids']
+    except json.JSONDecodeError as e:
+        print(f"错误：telegram.conf 解析失败 ({str(e)})，重置为空列表")
+        with open(TELEGRAM_CONFIG, 'w') as f:
+            json.dump({"chat_ids": []}, f)
+        return []
 
 # 读取账户列表并转换为地址
 def get_accounts():
@@ -33,9 +45,10 @@ def get_accounts():
             with open(CONFIG_FILE, 'w') as f:
                 json.dump([], f)
             return []
+        w3 = Web3(Web3.HTTPProvider(CALDERA_RPC_URL))
         return [{
             'name': account['name'],
-            'address': Web3(Web3.HTTPProvider(CALDERA_RPC_URL)).eth.account.from_key(account['private_key']).address
+            'address': w3.eth.account.from_key(account['private_key']).address
         } for account in accounts]
     except json.JSONDecodeError as e:
         print(f"错误：accounts.json 解析失败 ({str(e)})，重置为空列表")
@@ -73,8 +86,8 @@ def format_time(seconds):
     return f"{hours}小时 {minutes}分钟 {secs}秒"
 
 # 发送 Telegram 消息的异步函数
-async def send_balance_update(bot, previous_caldera_balance, interval_count, start_time, initial_caldera_balance, accounts, chat_id):
-    if chat_id is None:
+async def send_balance_update(bot, previous_caldera_balance, interval_count, start_time, initial_caldera_balance, accounts, chat_ids):
+    if not chat_ids:
         print("跳过 Telegram 通知：未配置 Chat ID")
         return previous_caldera_balance
     print(f"第 {interval_count} 次更新开始")
@@ -95,11 +108,12 @@ async def send_balance_update(bot, previous_caldera_balance, interval_count, sta
     message += f"24小时预估收益: {estimated_24h:+.4f} {SYMBOL}"
     
     print(f"尝试发送消息: {message}")
-    try:
-        await bot.send_message(chat_id=chat_id, text=message, parse_mode='Markdown')
-        print("消息发送成功")
-    except Exception as e:
-        print(f"消息发送失败: {str(e)}")
+    for chat_id in chat_ids:
+        try:
+            await bot.send_message(chat_id=chat_id, text=message, parse_mode='Markdown')
+            print(f"消息发送成功到 {chat_id}")
+        except Exception as e:
+            print(f"消息发送失败到 {chat_id}: {str(e)}")
     
     return caldera_balance
 
@@ -107,7 +121,7 @@ async def send_balance_update(bot, previous_caldera_balance, interval_count, sta
 async def main():
     print("启动 Telegram Bot...")
     bot = Bot(TELEGRAM_TOKEN)
-    chat_id = get_chat_id()
+    chat_ids = get_chat_ids()
     accounts = get_accounts()
     
     previous_caldera_balance = None
@@ -117,7 +131,7 @@ async def main():
     
     while True:
         interval_count += 1
-        previous_caldera_balance = await send_balance_update(bot, previous_caldera_balance, interval_count, start_time, initial_caldera_balance, accounts, chat_id)
+        previous_caldera_balance = await send_balance_update(bot, previous_caldera_balance, interval_count, start_time, initial_caldera_balance, accounts, chat_ids)
         print(f"等待下一次更新...")
         await asyncio.sleep(60)
 
