@@ -152,6 +152,10 @@ init_config() {
 
 # === 读取私钥 ===
 read_accounts() {
+    if [ ! -f "$CONFIG_FILE" ] || [ ! -s "$CONFIG_FILE" ]; then
+        echo '[]'
+        return
+    fi
     jq -r '.' "$CONFIG_FILE" 2>/dev/null || echo '[]'
 }
 
@@ -190,8 +194,10 @@ add_private_key() {
     # 合并新账户到现有账户列表
     accounts_json=$(echo "$accounts" | jq -c '.')
     for new_acc in "${new_accounts[@]}"; do
-        accounts_json=$(echo "$accounts_json $new_acc" | jq -s '.[0] + [.[1]] | unique_by(.private_key)' | jq -c '.')
+        accounts_json=$(echo "$accounts_json" | jq -c ". + [$new_acc]")
     done
+    # 去重并保存
+    accounts_json=$(echo "$accounts_json" | jq -c 'unique_by(.private_key)')
     echo "$accounts_json" > "$CONFIG_FILE"
     update_python_accounts
     echo -e "${GREEN}已添加 ${#new_accounts[@]} 个账户${NC}"
@@ -201,7 +207,7 @@ add_private_key() {
 delete_private_key() {
     accounts=$(read_accounts)
     account_length=$(echo "$accounts" | jq length)
-    if [ "$account_length" -eq 0 ]; then
+    if [ -z "$account_length" ] || [ "$account_length" -eq 0 ]; then
         echo -e "${RED}错误：账户列表为空！${NC}"
         return
     fi
