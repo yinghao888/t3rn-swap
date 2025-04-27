@@ -113,6 +113,7 @@ accounts: List[Dict] = []
 if not ACCOUNTS:
     logger.error("账户列表为空，请在 bridge-bot.sh 中添加私钥")
 else:
+    logger.info(f"加载账户列表：{ACCOUNTS}")
     for acc in ACCOUNTS:
         try:
             if not acc["private_key"]:
@@ -133,6 +134,7 @@ else:
                 "op_to_uni_last": 0,
                 "uni_to_op_last": 0
             })
+            logger.info(f"成功初始化账户 {acc['name']}，地址：{account.address}")
         except Exception as e:
             logger.error(f"初始化账户 {acc['name']} 失败: {e}")
 
@@ -180,7 +182,7 @@ def bridge_op_to_uni(account_info: Dict) -> bool:
         tx_receipt = w3_op.eth.wait_for_transaction_receipt(tx_hash, timeout=30)
         success_count += 1
         total_success_count += 1
-        account_info["op_to_uni_last"] = time.time()
+        account_info["op_to_uni_last"] = current_time
         logger.info(f"{LIGHT_BLUE}{account_info['name']} OP -> UNI 成功{RESET}")
         chat_ids = get_chat_ids()
         if chat_ids:
