@@ -42,7 +42,7 @@ check_root() {
 install_dependencies() {
     echo -e "${CYAN}正在检查和安装必要的依赖...${NC}"
     apt-get update -y || { echo -e "${RED}无法更新包列表${NC}"; exit 1; }
-    for pkg in curl wget python3 python3-pip python3-dev; do
+    for pkg in curl wget jq python3 python3-pip python3-dev; do
         if ! dpkg -l | grep -q "^ii.*$pkg "; then
             echo -e "${CYAN}安装 $pkg...${NC}"
             apt-get install -y "$pkg" || { echo -e "${RED}无法安装 $pkg${NC}"; exit 1; }
@@ -98,9 +98,16 @@ init_config() {
 read_accounts() {
     if [ ! -f "$CONFIG_FILE" ] || [ ! -s "$CONFIG_FILE" ]; then
         echo '[]'
-    else
-        cat "$CONFIG_FILE"
+        return
     fi
+    # 验证 JSON 格式
+    if ! jq -e . "$CONFIG_FILE" >/dev/null 2>&1; then
+        echo -e "${RED}警告：$CONFIG_FILE 格式无效，重置为空列表${NC}"
+        echo '[]' > "$CONFIG_FILE"
+        echo '[]'
+        return
+    fi
+    cat "$CONFIG_FILE"
 }
 
 # === 添加私钥 ===
@@ -111,9 +118,9 @@ add_private_key() {
     accounts=$(read_accounts)
     temp_file=$(mktemp)
     echo "$accounts" > "$temp_file"
-    new_accounts="[]"
-    count=$(echo "$accounts" | grep -o '"name":' | wc -l)
+    count=$(echo "$accounts" | jq 'length')
     added=0
+    new_accounts=()
     for key in "${keys[@]}"; do
         key=$(echo "$key" | tr -d '[:space:]')
         key=${key#0x}
@@ -122,26 +129,28 @@ add_private_key() {
             continue
         fi
         formatted_key="0x$key"
+        # 检查是否已存在
+        if echo "$accounts" | jq -e ".[] | select(.private_key == \"$formatted_key\")" >/dev/null 2>&1; then
+            echo -e "${RED}私钥 ${formatted_key:0:10}... 已存在，跳过${NC}"
+            continue
+        fi
         count=$((count + 1))
         name="Account$count"
         new_entry="{\"name\": \"$name\", \"private_key\": \"$formatted_key\"}"
-        if [ "$new_accounts" == "[]" ]; then
-            new_accounts="[$new_entry]"
-        else
-            new_accounts=$(echo "$new_accounts" | sed "s/]$/, $new_entry]/")
-        fi
+        new_accounts+=("$new_entry")
         added=$((added + 1))
     done
     if [ $added -eq 0 ]; then
         rm "$temp_file"
-        echo -e "${RED}未添加任何有效私钥${NC}"
+        echo -e "${RED}未添加任何新私钥${NC}"
         return
     fi
-    # 合并账户，保留现有账户
-    if [ "$accounts" != "[]" ]; then
-        new_accounts=$(echo "$accounts $new_accounts" | sed 's/\]\[/,/' | sed 's/^\[/[/;s/\]$/]/')
-    fi
-    echo "$new_accounts" > "$CONFIG_FILE"
+    # 合并新账户
+    accounts_json=$(echo "$accounts" | jq -c '.')
+    for entry in "${new_accounts[@]}"; do
+        accounts_json=$(echo "$accounts_json" | jq -c ". + [$entry]")
+    done
+    echo "$accounts_json" > "$CONFIG_FILE"
     rm "$temp_file"
     update_python_accounts
     echo -e "${GREEN}已添加 $added 个账户${NC}"
@@ -152,7 +161,8 @@ add_private_key() {
 # === 删除私钥 ===
 delete_private_key() {
     accounts=$(read_accounts)
-    if [ "$accounts" == "[]" ]; then
+    count=$(echo "$accounts" | jq 'length')
+    if [ "$count" -eq 0 ]; then
         echo -e "${RED}账户列表为空！${NC}"
         return
     fi
@@ -160,14 +170,14 @@ delete_private_key() {
     accounts_list=()
     i=1
     while IFS= read -r line; do
-        name=$(echo "$line" | grep -o '"name": "[^"]*"' | cut -d'"' -f4)
-        key=$(echo "$line" | grep -o '"private_key": "[^"]*"' | cut -d'"' -f4)
+        name=$(echo "$line" | jq -r '.name')
+        key=$(echo "$line" | jq -r '.private_key')
         if [ -n "$name" ] && [ -n "$key" ]; then
             accounts_list+=("$line")
             echo "$i. $name (${key:0:10}...)"
             i=$((i + 1))
         fi
-    done <<< "$(echo "$accounts" | tr '[]' '\n' | tr ',' '\n')"
+    done < <(echo "$accounts" | jq -c '.[]')
     if [ ${#accounts_list[@]} -eq 0 ]; then
         echo -e "${RED}账户列表为空！${NC}"
         return
@@ -179,14 +189,7 @@ delete_private_key() {
         echo -e "${RED}无效编号！${NC}"
         return
     fi
-    new_accounts="["
-    for ((j=0; j<${#accounts_list[@]}; j++)); do
-        if [ $((j+1)) -ne "$index" ]; then
-            [ "$new_accounts" != "[" ] && new_accounts+=","
-            new_accounts+="${accounts_list[$j]}"
-        fi
-    done
-    new_accounts="$new_accounts]"
+    new_accounts=$(echo "$accounts" | jq -c "del(.[$((index-1))])")
     echo "$new_accounts" > "$CONFIG_FILE"
     update_python_accounts
     echo -e "${GREEN}已删除账户！${NC}"
