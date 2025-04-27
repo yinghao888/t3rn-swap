@@ -43,43 +43,43 @@ install_dependencies() {
     echo -e "${CYAN}正在安装必要的依赖...${NC}"
     
     # 更新包列表
-    apt-get update -y || yum update -y || {
+    if ! apt-get update -y && ! yum update -y; then
         echo -e "${RED}无法更新包列表，请检查包管理器${NC}"
         exit 1
-    }
+    fi
 
     # 安装基本工具
-    apt-get install -y curl wget jq python3 python3-pip || yum install -y curl wget jq python3 python3-pip || {
+    if ! apt-get install -y curl wget jq python3 python3-pip && ! yum install -y curl wget jq python3 python3-pip; then
         echo -e "${RED}无法安装基本工具，请检查包管理器${NC}"
         exit 1
-    }
+    fi
 
     # 确保 Python 版本
-    if ! command -v python${PYTHON_VERSION} &> /dev/null; then
+    if ! command -v python${PYTHON_VERSION} >/dev/null 2>&1; then
         echo -e "${CYAN}安装 Python ${PYTHON_VERSION}...${NC}"
-        apt-get install -y python${PYTHON_VERSION} python${PYTHON_VERSION}-dev || yum install -y python${PYTHON_VERSION} python${PYTHON_VERSION}-devel || {
+        if ! apt-get install -y python${PYTHON_VERSION} python${PYTHON_VERSION}-dev && ! yum install -y python${PYTHON_VERSION} python${PYTHON_VERSION}-devel; then
             echo -e "${RED}无法安装 Python ${PYTHON_VERSION}${NC}"
             exit 1
-        }
-    }
+        fi
+    fi
 
     # 安装 Node.js 和 PM2
-    if ! command -v pm2 &> /dev/null; then
+    if ! command -v pm2 >/dev/null 2>&1; then
         echo -e "${CYAN}安装 Node.js 和 PM2...${NC}"
         curl -sL https://deb.nodesource.com/setup_16.x | bash -
-        apt-get install -y nodejs || yum install -y nodejs || {
+        if ! apt-get install -y nodejs && ! yum install -y nodejs; then
             echo -e "${RED}无法安装 Node.js${NC}"
             exit 1
-        }
+        fi
         npm install -g pm2
     fi
 
     # 安装 Python 依赖
     pip3 install --upgrade pip
-    pip3 install web3 python-telegram-bot[all] jq || {
+    if ! pip3 install web3 python-telegram-bot[all] jq; then
         echo -e "${RED}无法安装 Python 依赖${NC}"
         exit 1
-    }
+    fi
 
     echo -e "${GREEN}所有依赖安装完成！${NC}"
 }
@@ -87,18 +87,18 @@ install_dependencies() {
 # === 下载 Python 脚本 ===
 download_python_scripts() {
     echo -e "${CYAN}下载 Python 脚本...${NC}"
-    wget -O "$ARB_SCRIPT" https://raw.githubusercontent.com/yinghao888/t3rn-swap/main/uni-arb.py || {
+    if ! wget -O "$ARB_SCRIPT" https://raw.githubusercontent.com/yinghao888/t3rn-swap/main/uni-arb.py; then
         echo -e "${RED}无法下载 $ARB_SCRIPT${NC}"
         exit 1
-    }
-    wget -O "$OP_SCRIPT" https://raw.githubusercontent.com/yinghao888/t3rn-swap/main/op-uni.py || {
+    fi
+    if ! wget -O "$OP_SCRIPT" https://raw.githubusercontent.com/yinghao888/t3rn-swap/main/op-uni.py; then
         echo -e "${RED}无法下载 $OP_SCRIPT${NC}"
         exit 1
-    }
-    wget -O "$BALANCE_SCRIPT" https://raw.githubusercontent.com/yinghao888/t3rn-swap/main/balance-notifier.py || {
+    fi
+    if ! wget -O "$BALANCE_SCRIPT" https://raw.githubusercontent.com/yinghao888/t3rn-swap/main/balance-notifier.py; then
         echo -e "${RED}无法下载 $BALANCE_SCRIPT${NC}"
         exit 1
-    }
+    fi
     chmod +x "$ARB_SCRIPT" "$OP_SCRIPT" "$BALANCE_SCRIPT"
     echo -e "${GREEN}Python 脚本下载完成！${NC}"
 }
@@ -231,8 +231,6 @@ start_bridge() {
         echo -e "${RED}错误：请先添加至少一个账户！${NC}"
         return
     fi
-威力
-
     direction=$(cat "$DIRECTION_FILE")
     echo -e "${CYAN}正在使用 PM2 启动跨链脚本和余额查询脚本...${NC}"
     pm2 stop "$PM2_PROCESS_NAME" >/dev/null 2>&1
