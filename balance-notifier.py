@@ -1,298 +1,110 @@
-#!/bin/bash
+import asyncio
+import time
+from web3 import Web3
+from telegram import Bot
+import json
+import os
 
-# === 颜色定义 ===
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-CYAN='\033[0;36m'
-NC='\033[0m' # No Color
+# 配置
+TELEGRAM_TOKEN = "8070858648:AAGfrK1u0IaiXjr4f8TRbUDD92uBGTXdt38"
+CONFIG_FILE = "accounts.json"
+TELEGRAM_CONFIG = "telegram.conf"
+CALDERA_RPC_URL = "https://b2n.rpc.caldera.xyz/http"
+SYMBOL = "BRN"
 
-# === 脚本路径和配置 ===
-ARB_SCRIPT="uni-arb.py"
-OP_SCRIPT="op-uni.py"
-BALANCE_SCRIPT="balance-notifier.py"
-BOT_TOKEN="8070858648:AAGfrK1u0IaiXjr4f8TRbUDD92uBGTXdt38"
-CONFIG_FILE="accounts.json"
-DIRECTION_FILE="direction.conf"
-TELEGRAM_CONFIG="telegram.conf"
-PYTHON_VERSION="3.8"
-PM2_PROCESS_NAME="bridge-bot"
-PM2_BALANCE_NAME="balance-notifier"
+# 读取 Telegram Chat ID
+def get_chat_id():
+    if not os.path.exists(TELEGRAM_CONFIG):
+        raise Exception("未配置 Telegram 用户 ID，请在 bridge-bot.sh 中配置")
+    with open(TELEGRAM_CONFIG, 'r') as f:
+        return f.read().strip().split('=')[1]
 
-# === 横幅 ===
-banner() {
-    clear
-    echo -e "${CYAN}"
-    echo "=================================================="
-    echo "          跨链桥自动化脚本 by @hao3313076         "
-    echo "=================================================="
-    echo "关注 Twitter: JJ长10cm | 高效跨链，安全可靠！"
-    echo "=================================================="
-    echo -e "${NC}"
-}
+# 读取账户列表并转换为地址
+def get_accounts():
+    if not os.path.exists(CONFIG_FILE):
+        raise Exception("未找到 accounts.json，请添加账户")
+    with open(CONFIG_FILE, 'r') as f:
+        accounts = json.load(f)
+    w3 = Web3(Web3.HTTPProvider(CALDERA_RPC_URL))
+    return [{
+        'name': account['name'],
+        'address': w3.eth.account.from_key(account['private_key']).address
+    } for account in accounts]
 
-# === 检查 root 权限 ===
-check_root() {
-    if [ "$EUID" -ne 0 ]; then
-        echo -e "${RED}错误：请以 root 权限运行此脚本（使用 sudo）！${NC}"
-        exit 1
-    fi
-}
+# 连接到 Caldera 区块链
+print("尝试连接到 Caldera 区块链...")
+caldera_w3 = Web3(Web3.HTTPProvider(CALDERA_RPC_URL))
+if not caldera_w3.is_connected():
+    raise Exception("无法连接到 Caldera 区块链 RPC")
+print("Caldera 区块链连接成功")
 
-# === 安装依赖 ===
-install_dependencies() {
-    echo -e "${CYAN}正在安装必要的依赖...${NC}"
+# 查询 Caldera 网络总余额
+def get_caldera_balance(accounts):
+    total_balance = 0
+    for account in accounts:
+        try:
+            checksum_address = caldera_w3.to_checksum_address(account['address'])
+            balance_wei = caldera_w3.eth.get_balance(checksum_address)
+            balance = caldera_w3.from_wei(balance_wei, 'ether')
+            total_balance += balance
+            print(f"账户 {account['name']} ({account['address'][:10]}...) 余额: {balance:.4f} {SYMBOL}")
+        except Exception as e:
+            print(f"查询 Caldera 账户 {account['name']} ({account['address'][:10]}...) 失败: {str(e)}")
+    print(f"当前 Caldera 总余额: {total_balance:.4f} {SYMBOL}")
+    return total_balance
+
+# 格式化时间
+def format_time(seconds):
+    hours = int(seconds // 3600)
+    minutes = int((seconds % 3600) // 60)
+    secs = int(seconds % 60)
+    return f"{hours}小时 {minutes}分钟 {secs}秒"
+
+# 发送 Telegram 消息的异步函数
+async def send_balance_update(bot, previous_caldera_balance, interval_count, start_time, initial_caldera_balance, accounts, chat_id):
+    print(f"第 {interval_count} 次更新开始")
+    caldera_balance = get_caldera_balance(accounts)
+    elapsed_time = time.time() - start_time
+    difference = float(caldera_balance - (previous_caldera_balance or 0)) if previous_caldera_balance is not None else 0
+    total_increase = float(caldera_balance - initial_caldera_balance) if initial_caldera_balance is not None else 0
     
-    # 更新包列表
-    if ! apt-get update -y && ! yum update -y; then
-        echo -e "${RED}无法更新包列表，请检查包管理器${NC}"
-        exit 1
-    fi
+    # 计算 24 小时预估收益（24小时 = 1440分钟）
+    avg_per_minute = total_increase / (elapsed_time / 60) if elapsed_time > 0 else 0
+    estimated_24h = avg_per_minute * 1440
+    
+    message = f"📊 {SYMBOL} 总余额更新 ({time.strftime('%Y-%m-%d %H:%M:%S')}):\n"
+    message += f"当前 {SYMBOL} 总余额: {caldera_balance:.4f} {SYMBOL}\n"
+    message += f"前1分钟增加: {difference:+.4f} {SYMBOL}\n"
+    message += f"历史总共增加: {total_increase:+.4f} {SYMBOL}\n"
+    message += f"总共运行时间: {format_time(elapsed_time)}\n"
+    message += f"24小时预估收益: {estimated_24h:+.4f} {SYMBOL}"
+    
+    print(f"尝试发送消息: {message}")
+    try:
+        await bot.send_message(chat_id=chat_id, text=message, parse_mode='Markdown')
+        print("消息发送成功")
+    except Exception as e:
+        print(f"消息发送失败: {str(e)}")
+    
+    return caldera_balance
 
-    # 安装基本工具
-    if ! apt-get install -y curl wget jq python3 python3-pip && ! yum install -y curl wget jq python3 python3-pip; then
-        echo -e "${RED}无法安装基本工具，请检查包管理器${NC}"
-        exit 1
-    fi
+# 主循环
+async def main():
+    print("启动 Telegram Bot...")
+    bot = Bot(TELEGRAM_TOKEN)
+    chat_id = get_chat_id()
+    accounts = get_accounts()
+    
+    previous_caldera_balance = None
+    interval_count = 0
+    start_time = time.time()
+    initial_caldera_balance = get_caldera_balance(accounts)
+    
+    while True:
+        interval_count += 1
+        previous_caldera_balance = await send_balance_update(bot, previous_caldera_balance, interval_count, start_time, initial_caldera_balance, accounts, chat_id)
+        print(f"等待下一次更新...")
+        await asyncio.sleep(60)
 
-    # 确保 Python 版本
-    if ! command -v python${PYTHON_VERSION} >/dev/null 2>&1; then
-        echo -e "${CYAN}安装 Python ${PYTHON_VERSION}...${NC}"
-        if ! apt-get install -y python${PYTHON_VERSION} python${PYTHON_VERSION}-dev && ! yum install -y python${PYTHON_VERSION} python${PYTHON_VERSION}-devel; then
-            echo -e "${RED}无法安装 Python ${PYTHON_VERSION}${NC}"
-            exit 1
-        fi
-    fi
-
-    # 安装 Node.js 和 PM2
-    if ! command -v pm2 >/dev/null 2>&1; then
-        echo -e "${CYAN}安装 Node.js 和 PM2...${NC}"
-        curl -sL https://deb.nodesource.com/setup_16.x | bash -
-        if ! apt-get install -y nodejs && ! yum install -y nodejs; then
-            echo -e "${RED}无法安装 Node.js${NC}"
-            exit 1
-        fi
-        npm install -g pm2
-    fi
-
-    # 安装 Python 依赖
-    pip3 install --upgrade pip
-    if ! pip3 install web3 python-telegram-bot[all] jq; then
-        echo -e "${RED}无法安装 Python 依赖${NC}"
-        exit 1
-    fi
-
-    echo -e "${GREEN}所有依赖安装完成！${NC}"
-}
-
-# === 下载 Python 脚本 ===
-download_python_scripts() {
-    echo -e "${CYAN}下载 Python 脚本...${NC}"
-    if ! wget -O "$ARB_SCRIPT" https://raw.githubusercontent.com/yinghao888/t3rn-swap/main/uni-arb.py; then
-        echo -e "${RED}无法下载 $ARB_SCRIPT${NC}"
-        exit 1
-    fi
-    if ! wget -O "$OP_SCRIPT" https://raw.githubusercontent.com/yinghao888/t3rn-swap/main/op-uni.py; then
-        echo -e "${RED}无法下载 $OP_SCRIPT${NC}"
-        exit 1
-    fi
-    if ! wget -O "$BALANCE_SCRIPT" https://raw.githubusercontent.com/yinghao888/t3rn-swap/main/balance-notifier.py; then
-        echo -e "${RED}无法下载 $BALANCE_SCRIPT${NC}"
-        exit 1
-    fi
-    chmod +x "$ARB_SCRIPT" "$OP_SCRIPT" "$BALANCE_SCRIPT"
-    echo -e "${GREEN}Python 脚本下载完成！${NC}"
-}
-
-# === 初始化配置文件 ===
-init_config() {
-    if [ ! -f "$CONFIG_FILE" ]; then
-        echo '[]' > "$CONFIG_FILE"
-        echo -e "${GREEN}已创建空的账户配置文件: $CONFIG_FILE${NC}"
-    fi
-    if [ ! -f "$DIRECTION_FILE" ]; then
-        echo "arb_to_uni" > "$DIRECTION_FILE"
-        echo -e "${GREEN}默认跨链方向: ARB -> UNI${NC}"
-    fi
-}
-
-# === 读取私钥 ===
-read_accounts() {
-    jq -r '.' "$CONFIG_FILE" 2>/dev/null || echo '[]'
-}
-
-# === 添加私钥 ===
-add_private_key() {
-    echo -e "${CYAN}请输入账户名称（如 Account1）：${NC}"
-    read -p "> " name
-    echo -e "${CYAN}请输入私钥（以 0x 开头）：${NC}"
-    read -p "> " private_key
-    if [[ ! "$private_key" =~ ^0x[0-9a-fA-F]{64}$ ]]; then
-        echo -e "${RED}错误：无效的私钥格式！${NC}"
-        return
-    fi
-    accounts=$(read_accounts)
-    new_account=$(jq -n --arg name "$name" --arg key "$private_key" '[{"name": $name, "private_key": $key}]')
-    updated_accounts=$(echo "$accounts $new_account" | jq -s '.[0] + .[1] | unique_by(.name)')
-    echo "$updated_accounts" > "$CONFIG_FILE"
-    update_python_accounts
-    echo -e "${GREEN}已添加账户: $name${NC}"
-}
-
-# === 删除私钥 ===
-delete_private_key() {
-    accounts=$(read_accounts)
-    if [ "$(echo "$accounts" | jq length)" -eq 0 ]; then
-        echo -e "${RED}错误：账户列表为空！${NC}"
-        return
-    fi
-    echo -e "${CYAN}当前账户列表：${NC}"
-    echo "$accounts" | jq -r '.[] | "\(.name) (\(.private_key | .[0:10])...)"' | nl -w2 -s '. '
-    echo -e "${CYAN}请输入要删除的账户编号（或 0 取消）：${NC}"
-    read -p "> " index
-    if [ "$index" -eq 0 ]; then
-        return
-    fi
-    if [ "$index" -le 0 ] || [ "$index" -gt "$(echo "$accounts" | jq length)" ]; then
-        echo -e "${RED}错误：无效的编号！${NC}"
-        return
-    fi
-    updated_accounts=$(echo "$accounts" | jq "del(.[$((index-1))])")
-    echo "$updated_accounts" > "$CONFIG_FILE"
-    update_python_accounts
-    echo -e "${GREEN}已删除选定账户！${NC}"
-}
-
-# === 修改 Python 脚本中的账户 ===
-update_python_accounts() {
-    accounts=$(read_accounts)
-    accounts_str=$(echo "$accounts" | jq -r '.[] | "{\"private_key\": \"\(.private_key)\", \"name\": \"\(.name)\"}"' | jq -s .)
-    sed -i "s|ACCOUNTS = \[.*\]|ACCOUNTS = $accounts_str|" "$ARB_SCRIPT"
-    sed -i "s|ACCOUNTS = \[.*\]|ACCOUNTS = $accounts_str|" "$OP_SCRIPT"
-    echo -e "${GREEN}已更新 $ARB_SCRIPT 和 $OP_SCRIPT 中的账户列表！${NC}"
-}
-
-# === 选择跨链方向 ===
-select_direction() {
-    echo -e "${CYAN}请选择跨链方向：${NC}"
-    echo "1. ARB -> UNI"
-    echo "2. OP <-> UNI (双向)"
-    echo -e "${CYAN}请输入选项（1-2）：${NC}"
-    read -p "> " choice
-    case $choice in
-        1)
-            echo "arb_to_uni" > "$DIRECTION_FILE"
-            echo -e "${GREEN}已设置为 ARB -> UNI 方向！${NC}"
-            ;;
-        2)
-            echo "both" > "$DIRECTION_FILE"
-            echo -e "${GREEN}已设置为 OP <-> UNI 双向跨链！${NC}"
-            ;;
-        *)
-            echo -e "${RED}无效选项，默认 ARB -> UNI！${NC}"
-            echo "arb_to_uni" > "$DIRECTION_FILE"
-            ;;
-    esac
-}
-
-# === 配置 Telegram 通知 ===
-configure_telegram() {
-    echo -e "${CYAN}请输入 Telegram 用户 ID：${NC}"
-    read -p "> " chat_id
-    if [[ ! "$chat_id" =~ ^[0-9]+$ ]]; then
-        echo -e "${RED}错误：无效的 Telegram 用户 ID！${NC}"
-        return
-    fi
-    echo "chat_id=$chat_id" > "$TELEGRAM_CONFIG"
-    echo -e "${GREEN}Telegram 通知已配置！${NC}"
-}
-
-# === 删除脚本 ===
-delete_script() {
-    echo -e "${RED}警告：此操作将删除所有脚本和配置文件！${NC}"
-    echo -e "${CYAN}是否继续？(y/n)${NC}"
-    read -p "> " confirm
-    if [ "$confirm" = "y" ] || [ "$confirm" = "Y" ]; then
-        pm2 stop "$PM2_PROCESS_NAME" >/dev/null 2>&1
-        pm2 delete "$PM2_PROCESS_NAME" >/dev/null 2>&1
-        pm2 stop "$PM2_BALANCE_NAME" >/dev/null 2>&1
-        pm2 delete "$PM2_BALANCE_NAME" >/dev/null 2>&1
-        rm -f "$ARB_SCRIPT" "$OP_SCRIPT" "$BALANCE_SCRIPT" "$CONFIG_FILE" "$DIRECTION_FILE" "$TELEGRAM_CONFIG" "$0"
-        echo -e "${GREEN}所有脚本和配置文件已删除！${NC}"
-        exit 0
-    else
-        echo -e "${CYAN}操作已取消！${NC}"
-    fi
-}
-
-# === 使用 PM2 启动跨链脚本和余额查询脚本 ===
-start_bridge() {
-    accounts=$(read_accounts)
-    if [ "$(echo "$accounts" | jq length)" -eq 0 ]; then
-        echo -e "${RED}错误：请先添加至少一个账户！${NC}"
-        return
-    fi
-    direction=$(cat "$DIRECTION_FILE")
-    echo -e "${CYAN}正在使用 PM2 启动跨链脚本和余额查询脚本...${NC}"
-    pm2 stop "$PM2_PROCESS_NAME" >/dev/null 2>&1
-    pm2 delete "$PM2_PROCESS_NAME" >/dev/null 2>&1
-    pm2 stop "$PM2_BALANCE_NAME" >/dev/null 2>&1
-    pm2 delete "$PM2_BALANCE_NAME" >/dev/null 2>&1
-    if [ "$direction" = "arb_to_uni" ]; then
-        pm2 start "$ARB_SCRIPT" --name "$PM2_PROCESS_NAME" --interpreter python3
-    else
-        pm2 start "$OP_SCRIPT" --name "$PM2_PROCESS_NAME" --interpreter python3
-    fi
-    pm2 start "$BALANCE_SCRIPT" --name "$PM2_BALANCE_NAME" --interpreter python3
-    pm2 save
-    echo -e "${GREEN}跨链脚本和余额查询脚本已通过 PM2 启动！使用 'pm2 logs $PM2_PROCESS_NAME' 查看跨链日志，或 'pm2 logs $PM2_BALANCE_NAME' 查看余额日志，或 'pm2 stop $PM2_PROCESS_NAME' 和 'pm2 stop $PM2_BALANCE_NAME' 停止。${NC}"
-}
-
-# === 主菜单 ===
-main_menu() {
-    while true; do
-        banner
-        echo -e "${CYAN}请选择操作：${NC}"
-        echo "1. 管理私钥"
-        echo "2. 选择跨链方向"
-        echo "3. 开启 Telegram 通知"
-        echo "4. 删除脚本"
-        echo "5. 启动跨链脚本和余额查询"
-        echo "6. 退出"
-        echo -e "${CYAN}请输入选项（1-6）：${NC}"
-        read -p "> " choice
-        case $choice in
-            1)
-                while true; do
-                    banner
-                    echo -e "${CYAN}私钥管理：${NC}"
-                    echo "1. 添加私钥"
-                    echo "2. 删除私钥"
-                    echo "3. 返回"
-                    echo -e "${CYAN}请输入选项（1-3）：${NC}"
-                    read -p "> " sub_choice
-                    case $sub_choice in
-                        1) add_private_key ;;
-                        2) delete_private_key ;;
-                        3) break ;;
-                        *) echo -e "${RED}无效选项！${NC}" ;;
-                    esac
-                    read -p "按回车继续..."
-                done
-                ;;
-            2) select_direction ;;
-            3) configure_telegram ;;
-            4) delete_script ;;
-            5) start_bridge ;;
-            6) echo -e "${GREEN}退出脚本！${NC}"; exit 0 ;;
-            *) echo -e "${RED}无效选项！${NC}" ;;
-        esac
-        read -p "按回车继续..."
-    done
-}
-
-# === 主程序 ===
-check_root
-install_dependencies
-download_python_scripts
-init_config
-main_menu
+if __name__ == "__main__":
+    asyncio.run(main())
