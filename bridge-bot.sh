@@ -171,7 +171,7 @@ add_private_key() {
         key=${key#0x}
         # 验证私钥格式（64 位十六进制）
         if [[ ! "$key" =~ ^[0-9a-fA-F]{64}$ ]]; then
-            echo -e "${RED}错误：无效的私钥格式（$key），需为 64 位十六进制${NC}"
+            echo -e "${RED}错误：无效的私钥格式（${key:0:10}...），需为 64 位十六进制${NC}"
             continue
         fi
         # 添加 0x 前缀保存
@@ -188,16 +188,11 @@ add_private_key() {
         return
     fi
     # 合并新账户到现有账户列表
-    temp_file=$(mktemp)
-    echo "$accounts" > "$temp_file"
+    accounts_json=$(echo "$accounts" | jq -c '.')
     for new_acc in "${new_accounts[@]}"; do
-        echo "$new_acc" | jq -s '.' > "$temp_file.new"
-        mv "$temp_file.new" "$temp_file"
-        accounts=$(jq -s '.[0] + .[1] | unique_by(.private_key)' "$temp_file" <(echo "$new_acc"))
-        echo "$accounts" > "$temp_file"
+        accounts_json=$(echo "$accounts_json $new_acc" | jq -s '.[0] + [.[1]] | unique_by(.private_key)' | jq -c '.')
     done
-    mv "$temp_file" "$CONFIG_FILE"
-    rm -f "$temp_file"*
+    echo "$accounts_json" > "$CONFIG_FILE"
     update_python_accounts
     echo -e "${GREEN}已添加 ${#new_accounts[@]} 个账户${NC}"
 }
@@ -205,7 +200,8 @@ add_private_key() {
 # === 删除私钥 ===
 delete_private_key() {
     accounts=$(read_accounts)
-    if [ "$(echo "$accounts" | jq length)" -eq 0 ]; then
+    account_length=$(echo "$accounts" | jq length)
+    if [ "$account_length" -eq 0 ]; then
         echo -e "${RED}错误：账户列表为空！${NC}"
         return
     fi
@@ -216,7 +212,7 @@ delete_private_key() {
     if [ "$index" -eq 0 ]; then
         return
     fi
-    if [ "$index" -le 0 ] || [ "$index" -gt "$(echo "$accounts" | jq length)" ]; then
+    if [ -z "$index" ] || [ "$index" -le 0 ] || [ "$index" -gt "$account_length" ]; then
         echo -e "${RED}错误：无效的编号！${NC}"
         return
     fi
