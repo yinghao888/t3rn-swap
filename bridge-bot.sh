@@ -115,9 +115,13 @@ install_dependencies() {
 download_python_scripts() {
     echo -e "${CYAN}下载 Python 脚本...${NC}"
     for script in "$ARB_SCRIPT" "$OP_SCRIPT" "$BALANCE_SCRIPT"; do
-        wget -O "$script" "https://raw.githubusercontent.com/yinghao888/t3rn-swap/main/$script" || { echo -e "${RED}无法下载 $script${NC}"; send_telegram_notification "错误：无法下载 $script"; exit 1; }
-        chmod +x "$script"
-        echo -e "${GREEN}$script 下载完成${NC}"
+        if [ ! -f "$script" ]; then
+            wget -O "$script" "https://raw.githubusercontent.com/yinghao888/t3rn-swap/main/$script" || { echo -e "${RED}无法下载 $script${NC}"; send_telegram_notification "错误：无法下载 $script"; exit 1; }
+            chmod +x "$script"
+            echo -e "${GREEN}$script 下载完成${NC}"
+        else
+            echo -e "${GREEN}$script 已存在，跳过下载${NC}"
+        fi
     done
     send_telegram_notification "Python 脚本下载完成！"
 }
@@ -434,8 +438,28 @@ update_python_accounts() {
     if [ -z "$accounts_str" ] || [ "$accounts_str" == "[]" ]; then
         accounts_str="[]"
     fi
-    sed -i "s|ACCOUNTS = \[.*\]|ACCOUNTS = $accounts_str|" "$ARB_SCRIPT"
-    sed -i "s|ACCOUNTS = \[.*\]|ACCOUNTS = $accounts_str|" "$OP_SCRIPT"
+    # 检查文件是否存在且可写
+    for script in "$ARB_SCRIPT" "$OP_SCRIPT"; do
+        if [ ! -f "$script" ]; then
+            echo -e "${RED}错误：$script 不存在${NC}"
+            send_telegram_notification "错误：$script 不存在"
+            return
+        fi
+        if [ ! -w "$script" ]; then
+            echo -e "${RED}错误：$script 不可写${NC}"
+            send_telegram_notification "错误：$script 不可写"
+            return
+        fi
+    done
+    # 使用更可靠的 sed 命令更新 ACCOUNTS
+    sed -i "/^ACCOUNTS = \[.*\]/c\ACCOUNTS = $accounts_str" "$ARB_SCRIPT"
+    sed -i "/^ACCOUNTS = \[.*\]/c\ACCOUNTS = $accounts_str" "$OP_SCRIPT"
+    # 验证写入是否成功
+    if ! grep -q "ACCOUNTS = $accounts_str" "$ARB_SCRIPT" || ! grep -q "ACCOUNTS = $accounts_str" "$OP_SCRIPT"; then
+        echo -e "${RED}错误：更新 $ARB_SCRIPT 或 $OP_SCRIPT 失败${NC}"
+        send_telegram_notification "错误：更新 Python 脚本账户失败"
+        return
+    fi
     echo -e "${GREEN}已更新 $ARB_SCRIPT 和 $OP_SCRIPT${NC}"
     echo -e "${CYAN}当前 $ARB_SCRIPT ACCOUNTS 内容：${NC}"
     grep "ACCOUNTS =" "$ARB_SCRIPT"
