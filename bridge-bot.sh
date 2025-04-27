@@ -41,98 +41,38 @@ check_root() {
 # === 安装依赖 ===
 install_dependencies() {
     echo -e "${CYAN}正在检查和安装必要的依赖...${NC}"
-    
-    # 更新包列表
-    if ! apt-get update -y; then
-        echo -e "${RED}无法更新包列表，请检查网络或软件源${NC}"
-        exit 1
-    fi
-
-    # 检查并安装基本工具
-    for pkg in curl wget jq python3 python3-pip python3-dev; do
+    apt-get update -y || { echo -e "${RED}无法更新包列表${NC}"; exit 1; }
+    for pkg in curl wget python3 python3-pip python3-dev; do
         if ! dpkg -l | grep -q "^ii.*$pkg "; then
             echo -e "${CYAN}安装 $pkg...${NC}"
-            if ! apt-get install -y "$pkg"; then
-                echo -e "${RED}无法安装 $pkg，请检查软件源${NC}"
-                exit 1
-            fi
+            apt-get install -y "$pkg" || { echo -e "${RED}无法安装 $pkg${NC}"; exit 1; }
         else
-            echo -e "${GREEN}$pkg 已安装，跳过${NC}"
+            echo -e "${GREEN}$pkg 已安装${NC}"
         fi
     done
-
-    # 检查 Python 版本
-    if command -v python${PYTHON_VERSION} >/dev/null 2>&1; then
-        echo -e "${GREEN}Python ${PYTHON_VERSION} 已安装，跳过${NC}"
-    else
-        echo -e "${CYAN}未找到 Python ${PYTHON_VERSION}，尝试安装...${NC}"
-        if ! apt-get install -y software-properties-common; then
-            echo -e "${RED}无法安装 software-properties-common${NC}"
-            exit 1
-        fi
-        add-apt-repository ppa:deadsnakes/ppa -y
-        apt-get update -y
-        if ! apt-get install -y python${PYTHON_VERSION} python${PYTHON_VERSION}-dev python${PYTHON_VERSION}-distutils; then
-            echo -e "${RED}无法安装 Python ${PYTHON_VERSION}，尝试使用系统默认 Python${NC}"
-            if ! command -v python3 >/dev/null 2>&1; then
-                echo -e "${RED}系统无可用 Python 版本，请手动安装${NC}"
-                exit 1
-            fi
-        else
-            echo -e "${CYAN}安装 pip for Python ${PYTHON_VERSION}...${NC}"
-            curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py
-            python${PYTHON_VERSION} get-pip.py
-            rm get-pip.py
-        fi
+    if ! command -v python${PYTHON_VERSION} >/dev/null 2>&1; then
+        echo -e "${CYAN}安装 Python ${PYTHON_VERSION}...${NC}"
+        apt-get install -y python${PYTHON_VERSION} python${PYTHON_VERSION}-dev || echo -e "${RED}使用默认 Python${NC}"
     fi
-
-    # 检查并安装 Node.js 和 PM2
-    if command -v pm2 >/dev/null 2>&1; then
-        echo -e "${GREEN}PM2 已安装，跳过${NC}"
-    else
+    if ! command -v pm2 >/dev/null 2>&1; then
         echo -e "${CYAN}安装 Node.js 和 PM2...${NC}"
         curl -sL https://deb.nodesource.com/setup_16.x | bash -
-        if ! apt-get install -y nodejs; then
-            echo -e "${RED}无法安装 Node.js${NC}"
-            exit 1
-        fi
-        npm install -g pm2
+        apt-get install -y nodejs && npm install -g pm2 || { echo -e "${RED}无法安装 PM2${NC}"; exit 1; }
     fi
-
-    # 检查并安装 Python 依赖
     for py_pkg in web3 python-telegram-bot; do
-        if python3 -m pip show "$py_pkg" >/dev/null 2>&1; then
-            echo -e "${GREEN}Python 依赖 $py_pkg 已安装，跳过${NC}"
-        else
-            echo -e "${CYAN}安装 Python 依赖 $py_pkg...${NC}"
-            if ! pip3 install "$py_pkg"; then
-                echo -e "${RED}无法安装 Python 依赖 $py_pkg${NC}"
-                exit 1
-            fi
+        if ! python3 -m pip show "$py_pkg" >/dev/null 2>&1; then
+            echo -e "${CYAN}安装 $py_pkg...${NC}"
+            pip3 install "$py_pkg" || { echo -e "${RED}无法安装 $py_pkg${NC}"; exit 1; }
         fi
     done
-    if ! pip3 show python-telegram-bot | grep -q "Version:.*\[all\]"; then
-        echo -e "${CYAN}安装 python-telegram-bot[all]...${NC}"
-        if ! pip3 install python-telegram-bot[all]; then
-            echo -e "${RED}无法安装 python-telegram-bot[all]${NC}"
-            exit 1
-        fi
-    else
-        echo -e "${GREEN}python-telegram-bot[all] 已安装，跳过${NC}"
-    fi
-
-    echo -e "${GREEN}所有依赖检查和安装完成！${NC}"
+    echo -e "${GREEN}依赖安装完成！${NC}"
 }
 
 # === 下载 Python 脚本 ===
 download_python_scripts() {
     echo -e "${CYAN}下载 Python 脚本...${NC}"
     for script in "$ARB_SCRIPT" "$OP_SCRIPT" "$BALANCE_SCRIPT"; do
-        url="https://raw.githubusercontent.com/yinghao888/t3rn-swap/main/$script"
-        if ! wget -O "$script" "$url"; then
-            echo -e "${RED}无法下载 $script${NC}"
-            exit 1
-        fi
+        wget -O "$script" "https://raw.githubusercontent.com/yinghao888/t3rn-swap/main/$script" || { echo -e "${RED}无法下载 $script${NC}"; exit 1; }
         chmod +x "$script"
         echo -e "${GREEN}$script 下载完成${NC}"
     done
@@ -140,101 +80,90 @@ download_python_scripts() {
 
 # === 初始化配置文件 ===
 init_config() {
-    if [ ! -f "$CONFIG_FILE" ]; then
-        echo '[]' > "$CONFIG_FILE"
-        echo -e "${GREEN}已创建空的账户配置文件: $CONFIG_FILE${NC}"
-    fi
-    if [ ! -f "$DIRECTION_FILE" ]; then
-        echo "arb_to_uni" > "$DIRECTION_FILE"
-        echo -e "${GREEN}默认跨链方向: ARB -> UNI${NC}"
-    fi
+    [ ! -f "$CONFIG_FILE" ] && echo '[]' > "$CONFIG_FILE" && echo -e "${GREEN}创建 $CONFIG_FILE${NC}"
+    [ ! -f "$DIRECTION_FILE" ] && echo "arb_to_uni" > "$DIRECTION_FILE" && echo -e "${GREEN}默认方向: ARB -> UNI${NC}"
 }
 
-# === 读取私钥 ===
+# === 读取账户 ===
 read_accounts() {
     if [ ! -f "$CONFIG_FILE" ] || [ ! -s "$CONFIG_FILE" ]; then
         echo '[]'
-        return
+    else
+        cat "$CONFIG_FILE"
     fi
-    jq -r '.' "$CONFIG_FILE" 2>/dev/null || echo '[]'
 }
 
 # === 添加私钥 ===
 add_private_key() {
-    echo -e "${CYAN}请输入私钥（带或不带 0x，多个私钥用 + 分隔，例如 key1+key2）：${NC}"
+    echo -e "${CYAN}请输入私钥（带或不带 0x，多个用 + 分隔，例如 key1+key2）：${NC}"
     read -p "> " private_keys
-    # 按 + 分割私钥
     IFS='+' read -ra keys <<< "$private_keys"
     accounts=$(read_accounts)
-    account_count=$(echo "$accounts" | jq length)
-    new_accounts=()
+    if [ "$accounts" == "[]" ]; then
+        new_accounts="[]"
+    else
+        new_accounts="$accounts"
+    fi
+    count=$(grep -o '"name":' "$CONFIG_FILE" | wc -l)
     for key in "${keys[@]}"; do
-        # 清理空白字符
         key=$(echo "$key" | tr -d '[:space:]')
-        # 移除 0x 前缀（如果有）
         key=${key#0x}
-        # 验证私钥格式（64 位十六进制）
         if [[ ! "$key" =~ ^[0-9a-fA-F]{64}$ ]]; then
-            echo -e "${RED}错误：无效的私钥格式（${key:0:10}...），需为 64 位十六进制${NC}"
+            echo -e "${RED}无效私钥：${key:0:10}...（需 64 位十六进制）${NC}"
             continue
         fi
-        # 添加 0x 前缀保存
         formatted_key="0x$key"
-        # 生成默认账户名称
-        account_count=$((account_count + 1))
-        name="Account$account_count"
-        # 创建新账户 JSON 对象
-        new_acc=$(jq -n --arg name "$name" --arg key "$formatted_key" '{"name": $name, "private_key": $key}')
-        new_accounts+=("$new_acc")
+        count=$((count + 1))
+        name="Account$count"
+        new_entry="{\"name\": \"$name\", \"private_key\": \"$formatted_key\"}"
+        if [ "$new_accounts" == "[]" ]; then
+            new_accounts="[$new_entry]"
+        else
+            new_accounts=$(echo "$new_accounts" | sed "s/]$/, $new_entry]/")
+        fi
     done
-    if [ ${#new_accounts[@]} -eq 0 ]; then
-        echo -e "${RED}未添加任何有效私钥${NC}"
-        return
-    fi
-    # 合并新账户到现有账户列表
-    accounts_json=$(echo "$accounts" | jq -c '.')
-    for new_acc in "${new_accounts[@]}"; do
-        accounts_json=$(echo "$accounts_json" | jq -c ". + [$new_acc]")
-    done
-    # 去重并保存
-    accounts_json=$(echo "$accounts_json" | jq -c 'unique_by(.private_key)')
-    echo "$accounts_json" > "$CONFIG_FILE"
+    echo "$new_accounts" > "$CONFIG_FILE"
     update_python_accounts
-    echo -e "${GREEN}已添加 ${#new_accounts[@]} 个账户${NC}"
+    echo -e "${GREEN}已添加 ${#keys[@]} 个账户${NC}"
 }
 
 # === 删除私钥 ===
 delete_private_key() {
     accounts=$(read_accounts)
-    account_length=$(echo "$accounts" | jq length)
-    if [ -z "$account_length" ] || [ "$account_length" -eq 0 ]; then
-        echo -e "${RED}错误：账户列表为空！${NC}"
+    count=$(echo "$accounts" | grep -o '"name":' | wc -l)
+    if [ "$count" -eq 0 ]; then
+        echo -e "${RED}账户列表为空！${NC}"
         return
     fi
     echo -e "${CYAN}当前账户列表：${NC}"
-    echo "$accounts" | jq -r '.[] | "\(.name) (\(.private_key | .[0:10])...)"' | nl -w2 -s '. '
+    i=1
+    while IFS= read -r line; do
+        name=$(echo "$line" | grep -o '"name": "[^"]*"' | cut -d'"' -f4)
+        key=$(echo "$line" | grep -o '"private_key": "[^"]*"' | cut -d'"' -f4)
+        [ -n "$name" ] && echo "$i. $name (${key:0:10}...)"
+        i=$((i + 1))
+    done <<< "$(echo "$accounts" | tr '[]' '\n' | tr ',' '\n')"
     echo -e "${CYAN}请输入要删除的账户编号（或 0 取消）：${NC}"
     read -p "> " index
-    if [ "$index" -eq 0 ]; then
+    [ "$index" -eq 0 ] && return
+    if [ -z "$index" ] || [ "$index" -le 0 ] || [ "$index" -gt "$count" ]; then
+        echo -e "${RED}无效编号！${NC}"
         return
     fi
-    if [ -z "$index" ] || [ "$index" -le 0 ] || [ "$index" -gt "$account_length" ]; then
-        echo -e "${RED}错误：无效的编号！${NC}"
-        return
-    fi
-    updated_accounts=$(echo "$accounts" | jq "del(.[$((index-1))])")
-    echo "$updated_accounts" > "$CONFIG_FILE"
+    new_accounts=$(echo "$accounts" | awk -v idx="$index" 'BEGIN{RS="},{";ORS="},{"}NR!=idx{print $0}' | sed 's/},{/}, {/g')
+    new_accounts="[${new_accounts}]"
+    echo "$new_accounts" > "$CONFIG_FILE"
     update_python_accounts
-    echo -e "${GREEN}已删除选定账户！${NC}"
+    echo -e "${GREEN}已删除账户！${NC}"
 }
 
-# === 修改 Python 脚本中的账户 ===
+# === 更新 Python 脚本账户 ===
 update_python_accounts() {
     accounts=$(read_accounts)
-    accounts_str=$(echo "$accounts" | jq -r '.[] | "{\"private_key\": \"\(.private_key)\", \"name\": \"\(.name)\"}"' | jq -s .)
+    accounts_str=$(echo "$accounts" | sed 's/"/\\"/g')
     sed -i "s|ACCOUNTS = \[.*\]|ACCOUNTS = $accounts_str|" "$ARB_SCRIPT"
     sed -i "s|ACCOUNTS = \[.*\]|ACCOUNTS = $accounts_str|" "$OP_SCRIPT"
-    echo -e "${GREEN}已更新 $ARB_SCRIPT 和 $OP_SCRIPT 中的账户列表！${NC}"
+    echo -e "${GREEN}已更新 $ARB_SCRIPT 和 $OP_SCRIPT${NC}"
 }
 
 # === 选择跨链方向 ===
@@ -242,75 +171,47 @@ select_direction() {
     echo -e "${CYAN}请选择跨链方向：${NC}"
     echo "1. ARB -> UNI"
     echo "2. OP <-> UNI (双向)"
-    echo -e "${CYAN}请输入选项（1-2）：${NC}"
     read -p "> " choice
     case $choice in
-        1)
-            echo "arb_to_uni" > "$DIRECTION_FILE"
-            echo -e "${GREEN}已设置为 ARB -> UNI 方向！${NC}"
-            ;;
-        2)
-            echo "both" > "$DIRECTION_FILE"
-            echo -e "${GREEN}已设置为 OP <-> UNI 双向跨链！${NC}"
-            ;;
-        *)
-            echo -e "${RED}无效选项，默认 ARB -> UNI！${NC}"
-            echo "arb_to_uni" > "$DIRECTION_FILE"
-            ;;
+        1) echo "arb_to_uni" > "$DIRECTION_FILE"; echo -e "${GREEN}设置为 ARB -> UNI${NC}" ;;
+        2) echo "both" > "$DIRECTION_FILE"; echo -e "${GREEN}设置为 OP <-> UNI${NC}" ;;
+        *) echo -e "${RED}无效选项，默认 ARB -> UNI${NC}"; echo "arb_to_uni" > "$DIRECTION_FILE" ;;
     esac
 }
 
-# === 配置 Telegram 通知 ===
+# === 配置 Telegram ===
 configure_telegram() {
     echo -e "${CYAN}请输入 Telegram 用户 ID：${NC}"
     read -p "> " chat_id
-    if [[ ! "$chat_id" =~ ^[0-9]+$ ]]; then
-        echo -e "${RED}错误：无效的 Telegram 用户 ID！${NC}"
-        return
-    fi
+    [[ ! "$chat_id" =~ ^[0-9]+$ ]] && { echo -e "${RED}无效 ID！${NC}"; return; }
     echo "chat_id=$chat_id" > "$TELEGRAM_CONFIG"
-    echo -e "${GREEN}Telegram 通知已配置！${NC}"
+    echo -e "${GREEN}Telegram 配置完成！${NC}"
 }
 
 # === 删除脚本 ===
 delete_script() {
-    echo -e "${RED}警告：此操作将删除所有脚本和配置文件！${NC}"
-    echo -e "${CYAN}是否继续？(y/n)${NC}"
+    echo -e "${RED}警告：将删除所有脚本和配置！继续？(y/n)${NC}"
     read -p "> " confirm
     if [ "$confirm" = "y" ] || [ "$confirm" = "Y" ]; then
-        pm2 stop "$PM2_PROCESS_NAME" >/dev/null 2>&1
-        pm2 delete "$PM2_PROCESS_NAME" >/dev/null 2>&1
-        pm2 stop "$PM2_BALANCE_NAME" >/dev/null 2>&1
-        pm2 delete "$PM2_BALANCE_NAME" >/dev/null 2>&1
+        pm2 stop "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >/dev/null 2>&1
+        pm2 delete "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >/dev/null 2>&1
         rm -f "$ARB_SCRIPT" "$OP_SCRIPT" "$BALANCE_SCRIPT" "$CONFIG_FILE" "$DIRECTION_FILE" "$TELEGRAM_CONFIG" "$0"
-        echo -e "${GREEN}所有脚本和配置文件已删除！${NC}"
+        echo -e "${GREEN}已删除所有文件！${NC}"
         exit 0
-    else
-        echo -e "${CYAN}操作已取消！${NC}"
     fi
 }
 
-# === 使用 PM2 启动跨链脚本和余额查询脚本 ===
+# === 启动跨链脚本 ===
 start_bridge() {
     accounts=$(read_accounts)
-    if [ "$(echo "$accounts" | jq length)" -eq 0 ]; then
-        echo -e "${RED}错误：请先添加至少一个账户！${NC}"
-        return
-    fi
+    [ "$(echo "$accounts" | grep -o '"name":' | wc -l)" -eq 0 ] && { echo -e "${RED}请先添加账户！${NC}"; return; }
     direction=$(cat "$DIRECTION_FILE")
-    echo -e "${CYAN}正在使用 PM2 启动跨链脚本和余额查询脚本...${NC}"
-    pm2 stop "$PM2_PROCESS_NAME" >/dev/null 2>&1
-    pm2 delete "$PM2_PROCESS_NAME" >/dev/null 2>&1
-    pm2 stop "$PM2_BALANCE_NAME" >/dev/null 2>&1
-    pm2 delete "$PM2_BALANCE_NAME" >/dev/null 2>&1
-    if [ "$direction" = "arb_to_uni" ]; then
-        pm2 start "$ARB_SCRIPT" --name "$PM2_PROCESS_NAME" --interpreter python3
-    else
-        pm2 start "$OP_SCRIPT" --name "$PM2_PROCESS_NAME" --interpreter python3
-    fi
+    pm2 stop "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >/dev/null 2>&1
+    pm2 delete "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >/dev/null 2>&1
+    [ "$direction" = "arb_to_uni" ] && pm2 start "$ARB_SCRIPT" --name "$PM2_PROCESS_NAME" --interpreter python3 || pm2 start "$OP_SCRIPT" --name "$PM2_PROCESS_NAME" --interpreter python3
     pm2 start "$BALANCE_SCRIPT" --name "$PM2_BALANCE_NAME" --interpreter python3
     pm2 save
-    echo -e "${GREEN}跨链脚本和余额查询脚本已通过 PM2 启动！使用 'pm2 logs $PM2_PROCESS_NAME' 查看跨链日志，或 'pm2 logs $PM2_BALANCE_NAME' 查看余额日志，或 'pm2 stop $PM2_PROCESS_NAME' 和 'pm2 stop $PM2_BALANCE_NAME' 停止。${NC}"
+    echo -e "${GREEN}脚本已启动！使用 'pm2 logs' 查看日志${NC}"
 }
 
 # === 主菜单 ===
@@ -318,23 +219,15 @@ main_menu() {
     while true; do
         banner
         echo -e "${CYAN}请选择操作：${NC}"
-        echo "1. 管理私钥"
-        echo "2. 选择跨链方向"
-        echo "3. 开启 Telegram 通知"
-        echo "4. 删除脚本"
-        echo "5. 启动跨链脚本和余额查询"
-        echo "6. 退出"
-        echo -e "${CYAN}请输入选项（1-6）：${NC}"
+        echo "1. 管理私钥  2. 选择跨链方向  3. 配置 Telegram"
+        echo "4. 删除脚本  5. 启动跨链脚本  6. 退出"
         read -p "> " choice
         case $choice in
             1)
                 while true; do
                     banner
                     echo -e "${CYAN}私钥管理：${NC}"
-                    echo "1. 添加私钥"
-                    echo "2. 删除私钥"
-                    echo "3. 返回"
-                    echo -e "${CYAN}请输入选项（1-3）：${NC}"
+                    echo "1. 添加私钥  2. 删除私钥  3. 返回"
                     read -p "> " sub_choice
                     case $sub_choice in
                         1) add_private_key ;;
@@ -349,7 +242,7 @@ main_menu() {
             3) configure_telegram ;;
             4) delete_script ;;
             5) start_bridge ;;
-            6) echo -e "${GREEN}退出脚本！${NC}"; exit 0 ;;
+            6) echo -e "${GREEN}退出！${NC}"; exit 0 ;;
             *) echo -e "${RED}无效选项！${NC}" ;;
         esac
         read -p "按回车继续..."
