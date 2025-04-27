@@ -180,7 +180,7 @@ def bridge_op_to_uni(account_info: Dict) -> bool:
         tx_receipt = w3_op.eth.wait_for_transaction_receipt(tx_hash, timeout=30)
         success_count += 1
         total_success_count += 1
-        account_info["op_to_uni_last"] = current_time
+        account_info["op_to_uni_last"] = time.time()
         logger.info(f"{LIGHT_BLUE}{account_info['name']} OP -> UNI 成功{RESET}")
         chat_ids = get_chat_ids()
         if chat_ids:
