@@ -7,7 +7,8 @@ CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
 # === 脚本路径和配置 ===
-PYTHON_SCRIPT="bridge.py"
+ARB_SCRIPT="bridge.py"
+OP_SCRIPT="op-uni.py"
 BOT_TOKEN="8070858648:AAGfrK1u0IaiXjr4f8TRbUDD92uBGTXdt38"
 CONFIG_FILE="accounts.json"
 DIRECTION_FILE="direction.conf"
@@ -67,12 +68,12 @@ install_dependencies() {
 }
 
 # === 检查 Python 脚本是否存在 ===
-check_python_script() {
-    if [ ! -f "$PYTHON_SCRIPT" ]; then
-        echo -e "${RED}错误：未找到 $PYTHON_SCRIPT 脚本！请确保与 start_bridge.sh 在同一目录！${NC}"
+check_python_scripts() {
+    if [ ! -f "$ARB_SCRIPT" ] || [ ! -f "$OP_SCRIPT" ]; then
+        echo -e "${RED}错误：未找到 $ARB_SCRIPT 或 $OP_SCRIPT！请确保脚本存在！${NC}"
         exit 1
     fi
-    chmod +x "$PYTHON_SCRIPT"
+    chmod +x "$ARB_SCRIPT" "$OP_SCRIPT"
 }
 
 # === 初始化配置文件 ===
@@ -138,20 +139,26 @@ delete_private_key() {
 update_python_accounts() {
     accounts=$(read_accounts)
     accounts_str=$(echo "$accounts" | jq -r '.[] | "{\"private_key\": \"\(.private_key)\", \"name\": \"\(.name)\"}"' | jq -s .)
-    sed -i "s|ACCOUNTS = \[.*\]|ACCOUNTS = $accounts_str|" "$PYTHON_SCRIPT"
-    echo -e "${GREEN}已更新 $PYTHON_SCRIPT 中的账户列表！${NC}"
+    sed -i "s|ACCOUNTS = \[.*\]|ACCOUNTS = $accounts_str|" "$ARB_SCRIPT"
+    sed -i "s|ACCOUNTS = \[.*\]|ACCOUNTS = $accounts_str|" "$OP_SCRIPT"
+    echo -e "${GREEN}已更新 $ARB_SCRIPT 和 $OP_SCRIPT 中的账户列表！${NC}"
 }
 
 # === 选择跨链方向 ===
 select_direction() {
-    echo -e "${CYAN}当前仅支持 ARB -> UNI 方向：${NC}"
+    echo -e "${CYAN}请选择跨链方向：${NC}"
     echo "1. ARB -> UNI"
-    echo -e "${CYAN}请输入选项（1）：${NC}"
+    echo "2. OP <-> UNI (双向)"
+    echo -e "${CYAN}请输入选项（1-2）：${NC}"
     read -p "> " choice
     case $choice in
         1)
             echo "arb_to_uni" > "$DIRECTION_FILE"
             echo -e "${GREEN}已设置为 ARB -> UNI 方向！${NC}"
+            ;;
+        2)
+            echo "both" > "$DIRECTION_FILE"
+            echo -e "${GREEN}已设置为 OP <-> UNI 双向跨链！${NC}"
             ;;
         *)
             echo -e "${RED}无效选项，默认 ARB -> UNI！${NC}"
@@ -171,12 +178,14 @@ configure_telegram() {
     echo "chat_id=$chat_id" > "$TELEGRAM_CONFIG"
     echo -e "${GREEN}Telegram 通知已配置！${NC}"
 
-    # 确保 Python 脚本支持 Telegram 通知
-    if ! grep -q "import telegram" "$PYTHON_SCRIPT"; then
-        sed -i '1s|^|import telegram\nimport os\n|' "$PYTHON_SCRIPT"
-        sed -i "/logger.info(f\"{LIGHT_RED}{account_info\['name'\]} ARB -> UNI 成功{RESET}\")/a\        if os.path.exists('$TELEGRAM_CONFIG'):\n            bot = telegram.Bot(token='$BOT_TOKEN')\n            bot.send_message(chat_id=open('$TELEGRAM_CONFIG', 'r').read().strip().split('=')[1], text=f\"{account_info['name']} ARB -> UNI 跨链成功！\")" "$PYTHON_SCRIPT"
-        echo -e "${GREEN}已为 ARB -> UNI 跨链成功添加 Telegram 通知！${NC}"
+    # 为 ARB -> UNI 脚本添加 Telegram 通知
+    if ! grep -q "import telegram" "$ARB_SCRIPT"; then
+        sed -i '1s|^|import telegram\nimport os\n|' "$ARB_SCRIPT"
+        sed -i "/logger.info(f\"{LIGHT_RED}{account_info\['name'\]} ARB -> UNI 成功{RESET}\")/a\        if os.path.exists('$TELEGRAM_CONFIG'):\n            bot = telegram.Bot(token='$BOT_TOKEN')\n            bot.send_message(chat_id=open('$TELEGRAM_CONFIG', 'r').read().strip().split('=')[1], text=f\"{account_info['name']} ARB -> UNI 跨链成功！\")" "$ARB_SCRIPT"
+        echo -e "${GREEN}已为 $ARB_SCRIPT 添加 Telegram 通知！${NC}"
     fi
+
+    # 为 OP <-> UNI 脚本添加 Telegram 通知（已在脚本中内置）
 }
 
 # === 删除脚本 ===
@@ -185,7 +194,7 @@ delete_script() {
     echo -e "${CYAN}是否继续？(y/n)${NC}"
     read -p "> " confirm
     if [ "$confirm" = "y" ] || [ "$confirm" = "Y" ]; then
-        rm -f "$PYTHON_SCRIPT" "$CONFIG_FILE" "$DIRECTION_FILE" "$TELEGRAM_CONFIG" "$0"
+        rm -f "$ARB_SCRIPT" "$OP_SCRIPT" "$CONFIG_FILE" "$DIRECTION_FILE" "$TELEGRAM_CONFIG" "$0"
         echo -e "${GREEN}所有脚本和配置文件已删除！${NC}"
         exit 0
     else
@@ -200,8 +209,13 @@ start_bridge() {
         echo -e "${RED}错误：请先添加至少一个账户！${NC}"
         return
     fi
+    direction=$(cat "$DIRECTION_FILE")
     echo -e "${CYAN}正在启动跨链脚本...${NC}"
-    python3 "$PYTHON_SCRIPT" &
+    if [ "$direction" = "arb_to_uni" ]; then
+        python3 "$ARB_SCRIPT" &
+    else
+        python3 "$OP_SCRIPT" &
+    fi
     echo -e "${GREEN}跨链脚本已启动！按 Ctrl+C 停止。${NC}"
     wait
 }
@@ -252,6 +266,6 @@ main_menu() {
 # === 主程序 ===
 check_root
 install_dependencies
-check_python_script
+check_python_scripts
 init_config
 main_menu
