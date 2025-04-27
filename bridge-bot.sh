@@ -145,9 +145,14 @@ add_private_key() {
     fi
     accounts_json=$(echo "$accounts" | jq -c '.')
     for entry in "${new_accounts[@]}"; do
-        accounts_json=$(echo "$accounts_json $entry" | jq -s '.[0] + [.[1]]' | jq -c '.')
+        accounts_json=$(echo "$accounts_json" | jq -c ". + [$entry]")
     done
     echo "$accounts_json" > "$CONFIG_FILE"
+    if ! jq -e . "$CONFIG_FILE" >/dev/null 2>&1; then
+        echo -e "${RED}错误：写入 $CONFIG_FILE 失败，恢复原始内容${NC}"
+        mv "$temp_file" "$CONFIG_FILE"
+        return
+    fi
     rm "$temp_file"
     update_python_accounts
     echo -e "${GREEN}已添加 $added 个账户${NC}"
@@ -186,18 +191,48 @@ delete_private_key() {
         echo -e "${RED}无效编号！${NC}"
         return
     fi
+    temp_file=$(mktemp)
+    echo "$accounts" > "$temp_file"
     new_accounts=$(echo "$accounts" | jq -c "del(.[$((index-1))])")
     echo "$new_accounts" > "$CONFIG_FILE"
+    if ! jq -e . "$CONFIG_FILE" >/dev/null 2>&1; then
+        echo -e "${RED}错误：写入 $CONFIG_FILE 失败，恢复原始内容${NC}"
+        mv "$temp_file" "$CONFIG_FILE"
+        return
+    fi
+    rm "$temp_file"
     update_python_accounts
     echo -e "${GREEN}已删除账户！${NC}"
     echo -e "${CYAN}当前 accounts.json 内容：${NC}"
     cat "$CONFIG_FILE"
 }
 
+# === 查看私钥 ===
+view_private_keys() {
+    accounts=$(read_accounts)
+    count=$(echo "$accounts" | jq 'length')
+    if [ "$count" -eq 0 ]; then
+        echo -e "${RED}账户列表为空！${NC}"
+        return
+    fi
+    echo -e "${CYAN}当前账户列表：${NC}"
+    i=1
+    while IFS= read -r line; do
+        name=$(echo "$line" | jq -r '.name')
+        key=$(echo "$line" | jq -r '.private_key')
+        if [ -n "$name" ] && [ -n "$key" ]; then
+            echo "$i. $name (${key:0:10}...${key: -4})"
+            i=$((i + 1))
+        fi
+    done < <(echo "$accounts" | jq -c '.[]')
+    if [ $i -eq 1 ]; then
+        echo -e "${RED}账户列表为空！${NC}"
+    fi
+}
+
 # === 更新 Python 脚本账户 ===
 update_python_accounts() {
     accounts=$(read_accounts)
-    # 生成 Python 列表格式
     accounts_str=$(echo "$accounts" | jq -r '[.[] | {"private_key": .private_key, "name": .name}]' | sed 's/"/\\"/g')
     sed -i "s|ACCOUNTS = \[.*\]|ACCOUNTS = $accounts_str|" "$ARB_SCRIPT"
     sed -i "s|ACCOUNTS = \[.*\]|ACCOUNTS = $accounts_str|" "$OP_SCRIPT"
@@ -226,6 +261,13 @@ configure_telegram() {
     echo -e "${GREEN}Telegram 配置完成！${NC}"
 }
 
+# === 查看日志 ===
+view_logs() {
+    echo -e "${CYAN}显示 PM2 日志...${NC}"
+    pm2 logs --lines 50
+    echo -e "${CYAN}日志显示完成，按回车返回${NC}"
+}
+
 # === 删除脚本 ===
 delete_script() {
     echo -e "${RED}警告：将删除所有脚本和配置！继续？(y/n)${NC}"
@@ -252,7 +294,7 @@ start_bridge() {
     [ "$direction" = "arb_to_uni" ] && pm2 start "$ARB_SCRIPT" --name "$PM2_PROCESS_NAME" --interpreter python3 || pm2 start "$OP_SCRIPT" --name "$PM2_PROCESS_NAME" --interpreter python3
     pm2 start "$BALANCE_SCRIPT" --name "$PM2_BALANCE_NAME" --interpreter python3
     pm2 save
-    echo -e "${GREEN}脚本已启动！使用 'pm2 logs' 查看日志${NC}"
+    echo -e "${GREEN}脚本已启动！使用 '5. 查看日志' 查看运行状态${NC}"
 }
 
 # === 主菜单 ===
@@ -260,36 +302,40 @@ main_menu() {
     while true; do
         banner
         echo -e "${CYAN}请选择操作：${NC}"
-        echo "1. 管理私钥"
-        echo "2. 选择跨链方向"
-        echo "3. 配置 Telegram"
-        echo "4. 删除脚本"
-        echo "5. 启动跨链脚本"
-        echo "6. 退出"
+        echo "1. 配置 Telegram"
+        echo "2. 配置私钥"
+        echo "3. 配置跨链方向"
+        echo "4. 启动跨链脚本"
+        echo "5. 查看日志"
+        echo "6. 删除脚本"
+        echo "7. 退出"
         read -p "> " choice
         case $choice in
-            1)
+            1) configure_telegram ;;
+            2)
                 while true; do
                     banner
                     echo -e "${CYAN}私钥管理：${NC}"
                     echo "1. 添加私钥"
                     echo "2. 删除私钥"
-                    echo "3. 返回"
+                    echo "3. 查看私钥"
+                    echo "4. 返回"
                     read -p "> " sub_choice
                     case $sub_choice in
                         1) add_private_key ;;
                         2) delete_private_key ;;
-                        3) break ;;
+                        3) view_private_keys ;;
+                        4) break ;;
                         *) echo -e "${RED}无效选项！${NC}" ;;
                     esac
                     read -p "按回车继续..."
                 done
                 ;;
-            2) select_direction ;;
-            3) configure_telegram ;;
-            4) delete_script ;;
-            5) start_bridge ;;
-            6) echo -e "${GREEN}退出！${NC}"; exit 0 ;;
+            3) select_direction ;;
+            4) start_bridge ;;
+            5) view_logs ;;
+            6) delete_script ;;
+            7) echo -e "${GREEN}退出！${NC}"; exit 0 ;;
             *) echo -e "${RED}无效选项！${NC}" ;;
         esac
         read -p "按回车继续..."
