@@ -25,7 +25,6 @@ REQUEST_INTERVAL = 1  # 同一方向请求间隔（秒）
 OP_RPC_URLS = [
     "https://sepolia.optimism.io",
     "https://optimism-sepolia.drpc.org",
-    "https://rpc.ankr.com/optimism_sepolia",
 ]
 
 # UNI 测试网 RPC 配置
