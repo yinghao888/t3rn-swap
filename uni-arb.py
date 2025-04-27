@@ -113,6 +113,7 @@ accounts: List[Dict] = []
 if not ACCOUNTS:
     logger.error("账户列表为空，请在 bridge-bot.sh 中添加私钥")
 else:
+    logger.info(f"加载账户列表：{ACCOUNTS}")
     for acc in ACCOUNTS:
         try:
             if not acc["private_key"]:
@@ -132,6 +133,7 @@ else:
                 "uni_to_arb_last": 0,
                 "arb_to_uni_last": 0
             })
+            logger.info(f"成功初始化账户 {acc['name']}，地址：{account.address}")
         except Exception as e:
             logger.error(f"初始化账户 {acc['name']} 失败: {e}")
 
