@@ -41,7 +41,10 @@ install_dependencies() {
     echo -e "${CYAN}正在安装必要的依赖...${NC}"
     
     # 更新包列表
-    apt-get update -y || yum update -y || echo -e "${RED}无法更新包列表，请检查包管理器${NC}"
+    apt-get update -y || yum update -y || {
+        echo -e "${RED}无法更新包列表，请检查包管理器${NC}"
+        exit 1
+    }
 
     # 安装基本工具
     apt-get install -y curl wget jq python3 python3-pip || yum install -y curl wget jq python3 python3-pip || {
@@ -70,69 +73,7 @@ install_dependencies() {
     fi
 
     # 安装 Python 依赖
-    pip3 install --upgrade pip
-    pip3 install web3 python-telegram-bot jq || {
-        echo -e "${RED}无法安装 Python 依赖${NC}"
-        exit 1
-    }
-
-    echo -e "${GREEN}所有依赖安装完成！${NC}"
-}
-
-# === 下载 Python 脚本 ===
-download_python_scripts() {
-    echo -e "${CYAN}下载 Python 脚本...${NC}"
-    wget -O "$ARB_SCRIPT" https://raw.githubusercontent.com/yinghao888/t3rn-swap/main/uni-arb.py || {
-        echo -e "${RED}无法下载 $ARB_SCRIPT${NC}"
-        exit 1
-    }
-    wget -O "$OP_SCRIPT" https://raw.githubusercontent.com/yinghao888/t3rn-swap/main/op-uni.py || {
-        echo -e "${RED}无法下载 $OP_SCRIPT${NC}"
-        exit 1
-    }
-    chmod +x "$ARB_SCRIPT" "$OP_SCRIPT"
-    echo -e "${GREEN}Python 脚本下载完成！${NC}"
-}
-
-# === 初始化配置文件 ===
-init_config() {
-    if [ ! -f "$CONFIG_FILE" ]; then
-        echo '[]' > "$CONFIG_FILE"
-        echo -e "${GREEN}已创建空的账户配置文件: $CONFIG_FILE${NC}"
-    fi
-    if [ ! -f "$DIRECTION_FILE" ]; then
-        echo "arb_to_uni" > "$DIRECTION_FILE"
-        echo -e "${GREEN}默认跨链方向: ARB -> UNI${NC}"
-    fi
-}
-
-# === 读取私钥 ===
-read_accounts() {
-    jq -r '.' "$CONFIG_FILE" 2>/dev/null || echo '[]'
-}
-
-# === 添加私钥 ===
-add_private_key() {
-    echo -e "${CYAN}请输入账户名称（如 Account1）：${NC}"
-    read -p "> " name
-    echo -e "${CYAN}请输入私钥（以 0x 开头）：${NC}"
-    read -p "> " private_key
-    if [[ ! "$private_key" =~ ^0x[0-9a-fA-F]{64}$ ]]; then
-        echo -e "${RED}错误：无效的私钥格式！${NC}"
-        return
-    fi
-    accounts=$(read_accounts)
-    new_account=$(jq -n --arg name "$name" --arg key "$private_key" '[{"name": $name, "private_key": $key}]')
-    updated_accounts=$(echo "$accounts $new_account" | jq -s '.[0] + .[1] | unique_by(.name)')
-    echo "$updated_accounts" > "$CONFIG_FILE"
-    update_python_accounts
-    echo -e "${GREEN}已添加账户: $name${NC}"
-}
-
-# === 删除私钥 ===
-delete_private_key() {
-    accounts=$(read_accounts)
-    if [ "$(echo "$accounts" | jq length)" -eq 0 ]; then
+ = 0 ]; then
         echo -e "${RED}错误：账户列表为空！${NC}"
         return
     fi
