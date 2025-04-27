@@ -155,7 +155,7 @@ def bridge_uni_to_arb(account_info: Dict) -> bool:
         return False
     try:
         w3_uni = get_web3_instance(UNI_RPC_URLS, chain_id=1301)
-        amount_wei = w3_uni.to_wei Rosepaliawei(AMOUNT_ETH, 'ether')
+        amount_wei = w3_uni.to_wei(AMOUNT_ETH, 'ether')
         balance = w3_uni.eth.get_balance(account_info["address"])
         gas_price = get_dynamic_gas_price(w3_uni)
         total_cost = amount_wei + (gas_price * GAS_LIMIT_UNI)
