@@ -82,11 +82,11 @@ install_dependencies() {
 # === 下载 Python 脚本 ===
 download_python_scripts() {
     echo -e "${CYAN}下载 Python 脚本...${NC}"
-    wget -O "$ARB_SCRIPT" https://raw.githubusercontent.com/your-repo/bridge-bot/main/uni-arb.py || {
+    wget -O "$ARB_SCRIPT" https://raw.githubusercontent.com/yinghao888/t3rn-swap/main/uni-arb.py || {
         echo -e "${RED}无法下载 $ARB_SCRIPT${NC}"
         exit 1
     }
-    wget -O "$OP_SCRIPT" https://raw.githubusercontent.com/your-repo/bridge-bot/main/op-uni.py || {
+    wget -O "$OP_SCRIPT" https://raw.githubusercontent.com/yinghao888/t3rn-swap/main/op-uni.py || {
         echo -e "${RED}无法下载 $OP_SCRIPT${NC}"
         exit 1
     }
