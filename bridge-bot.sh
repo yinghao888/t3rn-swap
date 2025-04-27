@@ -100,7 +100,6 @@ read_accounts() {
         echo '[]'
         return
     fi
-    # 验证 JSON 格式
     if ! jq -e . "$CONFIG_FILE" >/dev/null 2>&1; then
         echo -e "${RED}警告：$CONFIG_FILE 格式无效，重置为空列表${NC}"
         echo '[]' > "$CONFIG_FILE"
@@ -129,7 +128,6 @@ add_private_key() {
             continue
         fi
         formatted_key="0x$key"
-        # 检查是否已存在
         if echo "$accounts" | jq -e ".[] | select(.private_key == \"$formatted_key\")" >/dev/null 2>&1; then
             echo -e "${RED}私钥 ${formatted_key:0:10}... 已存在，跳过${NC}"
             continue
@@ -145,10 +143,9 @@ add_private_key() {
         echo -e "${RED}未添加任何新私钥${NC}"
         return
     fi
-    # 合并新账户
     accounts_json=$(echo "$accounts" | jq -c '.')
     for entry in "${new_accounts[@]}"; do
-        accounts_json=$(echo "$accounts_json" | jq -c ". + [$entry]")
+        accounts_json=$(echo "$accounts_json $entry" | jq -s '.[0] + [.[1]]' | jq -c '.')
     done
     echo "$accounts_json" > "$CONFIG_FILE"
     rm "$temp_file"
@@ -200,7 +197,8 @@ delete_private_key() {
 # === 更新 Python 脚本账户 ===
 update_python_accounts() {
     accounts=$(read_accounts)
-    accounts_str=$(echo "$accounts" | sed 's/"/\\"/g')
+    # 生成 Python 列表格式
+    accounts_str=$(echo "$accounts" | jq -r '[.[] | {"private_key": .private_key, "name": .name}]' | sed 's/"/\\"/g')
     sed -i "s|ACCOUNTS = \[.*\]|ACCOUNTS = $accounts_str|" "$ARB_SCRIPT"
     sed -i "s|ACCOUNTS = \[.*\]|ACCOUNTS = $accounts_str|" "$OP_SCRIPT"
     echo -e "${GREEN}已更新 $ARB_SCRIPT 和 $OP_SCRIPT${NC}"
