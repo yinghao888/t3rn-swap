@@ -4,8 +4,6 @@ from typing import List, Dict
 import logging
 from concurrent.futures import ThreadPoolExecutor
 import os
-import telegram
-import json
 
 # === ANSI 颜色代码 ===
 LIGHT_BLUE = "\033[96m"
@@ -77,19 +75,6 @@ def get_web3_instance(rpc_urls: List[str], chain_id: int) -> Web3:
         except Exception as e:
             logger.warning(f"连接 {url} 失败: {e}")
     raise Exception("所有可用 RPC 均不可用")
-
-# 读取 Telegram Chat IDs
-def get_chat_ids():
-    if not os.path.exists('telegram.conf'):
-        logger.warning("未找到 telegram.conf，未配置 Telegram 通知")
-        return []
-    try:
-        with open('telegram.conf', 'r') as f:
-            config = json.load(f)
-        return config.get('chat_ids', [])
-    except Exception as e:
-        logger.error(f"读取 telegram.conf 失败: {e}")
-        return []
 
 # 优化参数
 GAS_LIMIT_OP = 250000
@@ -183,15 +168,6 @@ def bridge_op_to_uni(account_info: Dict) -> bool:
         total_success_count += 1
         account_info["op_to_uni_last"] = current_time
         logger.info(f"{LIGHT_BLUE}{account_info['name']} OP -> UNI 成功{RESET}")
-        chat_ids = get_chat_ids()
-        if chat_ids:
-            bot = telegram.Bot(token="8070858648:AAGfrK1u0IaiXjr4f8TRbUDD92uBGTXdt38")
-            for chat_id in chat_ids:
-                try:
-                    bot.send_message(chat_id=chat_id, text=f"{account_info['name']} OP -> UNI 跨链成功！")
-                    logger.info(f"通知发送成功到 {chat_id}")
-                except Exception as e:
-                    logger.error(f"通知发送失败到 {chat_id}: {e}")
         return True
     except Exception as e:
         logger.error(f"{account_info['name']} OP -> UNI 失败: {e}")
@@ -233,15 +209,6 @@ def bridge_uni_to_op(account_info: Dict) -> bool:
         total_success_count += 1
         account_info["uni_to_op_last"] = current_time
         logger.info(f"{LIGHT_RED}{account_info['name']} UNI -> OP 成功{RESET}")
-        chat_ids = get_chat_ids()
-        if chat_ids:
-            bot = telegram.Bot(token="8070858648:AAGfrK1u0IaiXjr4f8TRbUDD92uBGTXdt38")
-            for chat_id in chat_ids:
-                try:
-                    bot.send_message(chat_id=chat_id, text=f"{account_info['name']} UNI -> OP 跨链成功！")
-                    logger.info(f"通知发送成功到 {chat_id}")
-                except Exception as e:
-                    logger.error(f"通知发送失败到 {chat_id}: {e}")
         return True
     except Exception as e:
         logger.error(f"{account_info['name']} UNI -> OP 失败: {e}")
