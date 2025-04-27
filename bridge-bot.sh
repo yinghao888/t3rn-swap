@@ -2,7 +2,7 @@
 
 # === 颜色定义 ===
 RED='\033[0;31m'
-GREEN='\033[0;32 m'
+GREEN='\033[0;32m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
@@ -40,85 +40,103 @@ check_root() {
 
 # === 安装依赖 ===
 install_dependencies() {
-    echo -e "${CYAN}正在安装必要的依赖...${NC}"
+    echo -e "${CYAN}正在检查和安装必要的依赖...${NC}"
     
     # 更新包列表
-    if apt-get update -y; then
-        echo -e "${GREEN}apt-get 更新成功${NC}"
-    elif yum update -y; then
-        echo -e "${GREEN}yum 更新成功${NC}"
-    else
-        echo -e "${RED}无法更新包列表，请检查包管理器${NC}"
+    if ! apt-get update -y; then
+        echo -e "${RED}无法更新包列表，请检查网络或软件源${NC}"
         exit 1
     fi
 
-    # 安装基本工具
-    if apt-get install -y curl wget jq python3 python3-pip; then
-        echo -e "${GREEN}apt-get 安装基本工具成功${NC}"
-    elif yum install -y curl wget jq python3 python3-pip; then
-        echo -e "${GREEN}yum 安装基本工具成功${NC}"
-    else
-        echo -e "${RED}无法安装基本工具，请检查包管理器${NC}"
-        exit 1
-    fi
-
-    # 确保 Python 版本
-    if ! command -v python${PYTHON_VERSION} >/dev/null 2>&1; then
-        echo -e "${CYAN}安装 Python ${PYTHON_VERSION}...${NC}"
-        if apt-get install -y python${PYTHON_VERSION} python${PYTHON_VERSION}-dev; then
-            echo -e "${GREEN}apt-get 安装 Python ${PYTHON_VERSION} 成功${NC}"
-        elif yum install -y python${PYTHON_VERSION} python${PYTHON_VERSION}-devel; then
-            echo -e "${GREEN}yum 安装 Python ${PYTHON_VERSION} 成功${NC}"
+    # 检查并安装基本工具
+    for pkg in curl wget jq python3 python3-pip python3-dev; do
+        if ! dpkg -l | grep -q "^ii.*$pkg "; then
+            echo -e "${CYAN}安装 $pkg...${NC}"
+            if ! apt-get install -y "$pkg"; then
+                echo -e "${RED}无法安装 $pkg，请检查软件源${NC}"
+                exit 1
+            fi
         else
-            echo -e "${RED}无法安装 Python ${PYTHON_VERSION}${NC}"
+            echo -e "${GREEN}$pkg 已安装，跳过${NC}"
+        fi
+    done
+
+    # 检查 Python 版本
+    if command -v python${PYTHON_VERSION} >/dev/null 2>&1; then
+        echo -e "${GREEN}Python ${PYTHON_VERSION} 已安装，跳过${NC}"
+    else
+        echo -e "${CYAN}未找到 Python ${PYTHON_VERSION}，尝试安装...${NC}"
+        if ! apt-get install -y software-properties-common; then
+            echo -e "${RED}无法安装 software-properties-common${NC}"
             exit 1
+        fi
+        add-apt-repository ppa:deadsnakes/ppa -y
+        apt-get update -y
+        if ! apt-get install -y python${PYTHON_VERSION} python${PYTHON_VERSION}-dev python${PYTHON_VERSION}-distutils; then
+            echo -e "${RED}无法安装 Python ${PYTHON_VERSION}，尝试使用系统默认 Python${NC}"
+            if ! command -v python3 >/dev/null 2>&1; then
+                echo -e "${RED}系统无可用 Python 版本，请手动安装${NC}"
+                exit 1
+            fi
+        else
+            echo -e "${CYAN}安装 pip for Python ${PYTHON_VERSION}...${NC}"
+            curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py
+            python${PYTHON_VERSION} get-pip.py
+            rm get-pip.py
         fi
     fi
 
-    # 安装 Node.js 和 PM2
-    if ! command -v pm2 >/dev/null 2>&1; then
+    # 检查并安装 Node.js 和 PM2
+    if command -v pm2 >/dev/null 2>&1; then
+        echo -e "${GREEN}PM2 已安装，跳过${NC}"
+    else
         echo -e "${CYAN}安装 Node.js 和 PM2...${NC}"
         curl -sL https://deb.nodesource.com/setup_16.x | bash -
-        if apt-get install -y nodejs; then
-            echo -e "${GREEN}apt-get 安装 Node.js 成功${NC}"
-        elif yum install -y nodejs; then
-            echo -e "${GREEN}yum 安装 Node.js 成功${NC}"
-        else
+        if ! apt-get install -y nodejs; then
             echo -e "${RED}无法安装 Node.js${NC}"
             exit 1
         fi
         npm install -g pm2
     fi
 
-    # 安装 Python 依赖
-    pip3 install --upgrade pip
-    if pip3 install web3 python-telegram-bot[all] jq; then
-        echo -e "${GREEN}Python 依赖安装成功${NC}"
+    # 检查并安装 Python 依赖
+    for py_pkg in web3 python-telegram-bot; do
+        if python3 -m pip show "$py_pkg" >/dev/null 2>&1; then
+            echo -e "${GREEN}Python 依赖 $py_pkg 已安装，跳过${NC}"
+        else
+            echo -e "${CYAN}安装 Python 依赖 $py_pkg...${NC}"
+            if ! pip3 install "$py_pkg"; then
+                echo -e "${RED}无法安装 Python 依赖 $py_pkg${NC}"
+                exit 1
+            fi
+        fi
+    done
+    # 单独检查 python-telegram-bot[all]（包含异步支持）
+    if ! pip3 show python-telegram-bot | grep -q "Version:.*\[all\]"; then
+        echo -e "${CYAN}安装 python-telegram-bot[all]...${NC}"
+        if ! pip3 install python-telegram-bot[all]; then
+            echo -e "${RED}无法安装 python-telegram-bot[all]${NC}"
+            exit 1
+        fi
     else
-        echo -e "${RED}无法安装 Python 依赖${NC}"
-        exit 1
+        echo -e "${GREEN}python-telegram-bot[all] 已安装，跳过${NC}"
     fi
 
-    echo -e "${GREEN}所有依赖安装完成！${NC}"
+    echo -e "${GREEN}所有依赖检查和安装完成！${NC}"
 }
 
 # === 下载 Python 脚本 ===
 download_python_scripts() {
     echo -e "${CYAN}下载 Python 脚本...${NC}"
-    if ! wget -O "$ARB_SCRIPT" https://raw.githubusercontent.com/yinghao888/t3rn-swap/main/uni-arb.py; then
-        echo -e "${RED}无法下载 $ARB_SCRIPT${NC}"
-        exit 1
-    fi
-    if ! wget -O "$OP_SCRIPT" https://raw.githubusercontent.com/yinghao888/t3rn-swap/main/op-uni.py; then
-        echo -e "${RED}无法下载 $OP_SCRIPT${NC}"
-        exit 1
-    fi
-    if ! wget -O "$BALANCE_SCRIPT" https://raw.githubusercontent.com/yinghao888/t3rn-swap/main/balance-notifier.py; then
-        echo -e "${RED}无法下载 $BALANCE_SCRIPT${NC}"
-        exit 1
-    fi
-    chmod +x "$ARB_SCRIPT" "$OP_SCRIPT" "$BALANCE_SCRIPT"
-    echo -e "${GREEN}Python 脚本下载完成！${NC}"
+    for script in "$ARB_SCRIPT" "$OP_SCRIPT" "$BALANCE_SCRIPT"; do
+        url="https://raw.githubusercontent.com/yinghao888/t3rn-swap/main/$script"
+        if ! wget -O "$script" "$url"; then
+            echo -e "${RED}无法下载 $script${NC}"
+            exit 1
+        fi
+        chmod +x "$script"
+        echo -e "${GREEN}$script 下载完成${NC}"
+    done
 }
 
 # === 初始化配置文件 ===
