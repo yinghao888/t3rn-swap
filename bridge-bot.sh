@@ -179,17 +179,25 @@ add_private_key() {
         # 生成默认账户名称
         account_count=$((account_count + 1))
         name="Account$account_count"
-        new_accounts+=($(jq -n --arg name "$name" --arg key "$formatted_key" '{"name": $name, "private_key": $key}'))
+        # 创建新账户 JSON 对象
+        new_acc=$(jq -n --arg name "$name" --arg key "$formatted_key" '{"name": $name, "private_key": $key}')
+        new_accounts+=("$new_acc")
     done
     if [ ${#new_accounts[@]} -eq 0 ]; then
         echo -e "${RED}未添加任何有效私钥${NC}"
         return
     fi
-    # 合并新账户
+    # 合并新账户到现有账户列表
+    temp_file=$(mktemp)
+    echo "$accounts" > "$temp_file"
     for new_acc in "${new_accounts[@]}"; do
-        accounts=$(echo "$accounts $new_acc" | jq -s '.[0] + [.[1]] | unique_by(.private_key)')
+        echo "$new_acc" | jq -s '.' > "$temp_file.new"
+        mv "$temp_file.new" "$temp_file"
+        accounts=$(jq -s '.[0] + .[1] | unique_by(.private_key)' "$temp_file" <(echo "$new_acc"))
+        echo "$accounts" > "$temp_file"
     done
-    echo "$accounts" > "$CONFIG_FILE"
+    mv "$temp_file" "$CONFIG_FILE"
+    rm -f "$temp_file"*
     update_python_accounts
     echo -e "${GREEN}已添加 ${#new_accounts[@]} 个账户${NC}"
 }
