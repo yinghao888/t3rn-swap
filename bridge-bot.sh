@@ -111,7 +111,6 @@ install_dependencies() {
             fi
         fi
     done
-    # 单独检查 python-telegram-bot[all]（包含异步支持）
     if ! pip3 show python-telegram-bot | grep -q "Version:.*\[all\]"; then
         echo -e "${CYAN}安装 python-telegram-bot[all]...${NC}"
         if ! pip3 install python-telegram-bot[all]; then
@@ -158,20 +157,41 @@ read_accounts() {
 
 # === 添加私钥 ===
 add_private_key() {
-    echo -e "${CYAN}请输入账户名称（如 Account1）：${NC}"
-    read -p "> " name
-    echo -e "${CYAN}请输入私钥（以 0x 开头）：${NC}"
-    read -p "> " private_key
-    if [[ ! "$private_key" =~ ^0x[0-9a-fA-F]{64}$ ]]; then
-        echo -e "${RED}错误：无效的私钥格式！${NC}"
+    echo -e "${CYAN}请输入私钥（带或不带 0x，多个私钥用 + 分隔，例如 key1+key2）：${NC}"
+    read -p "> " private_keys
+    # 按 + 分割私钥
+    IFS='+' read -ra keys <<< "$private_keys"
+    accounts=$(read_accounts)
+    account_count=$(echo "$accounts" | jq length)
+    new_accounts=()
+    for key in "${keys[@]}"; do
+        # 清理空白字符
+        key=$(echo "$key" | tr -d '[:space:]')
+        # 移除 0x 前缀（如果有）
+        key=${key#0x}
+        # 验证私钥格式（64 位十六进制）
+        if [[ ! "$key" =~ ^[0-9a-fA-F]{64}$ ]]; then
+            echo -e "${RED}错误：无效的私钥格式（$key），需为 64 位十六进制${NC}"
+            continue
+        fi
+        # 添加 0x 前缀保存
+        formatted_key="0x$key"
+        # 生成默认账户名称
+        account_count=$((account_count + 1))
+        name="Account$account_count"
+        new_accounts+=($(jq -n --arg name "$name" --arg key "$formatted_key" '{"name": $name, "private_key": $key}'))
+    done
+    if [ ${#new_accounts[@]} -eq 0 ]; then
+        echo -e "${RED}未添加任何有效私钥${NC}"
         return
     fi
-    accounts=$(read_accounts)
-    new_account=$(jq -n --arg name "$name" --arg key "$private_key" '[{"name": $name, "private_key": $key}]')
-    updated_accounts=$(echo "$accounts $new_account" | jq -s '.[0] + .[1] | unique_by(.name)')
-    echo "$updated_accounts" > "$CONFIG_FILE"
+    # 合并新账户
+    for new_acc in "${new_accounts[@]}"; do
+        accounts=$(echo "$accounts $new_acc" | jq -s '.[0] + [.[1]] | unique_by(.private_key)')
+    done
+    echo "$accounts" > "$CONFIG_FILE"
     update_python_accounts
-    echo -e "${GREEN}已添加账户: $name${NC}"
+    echo -e "${GREEN}已添加 ${#new_accounts[@]} 个账户${NC}"
 }
 
 # === 删除私钥 ===
