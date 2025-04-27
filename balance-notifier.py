@@ -15,7 +15,7 @@ SYMBOL = "BRN"
 # 读取 Telegram Chat ID
 def get_chat_id():
     if not os.path.exists(TELEGRAM_CONFIG):
-        print("警告：未配置 Telegram 用户 ID，请在 bridge-bot.sh 中选择 '3. 配置 Telegram' 输入 ID")
+        print("警告：未配置 Telegram 用户 ID，请在 bridge-bot.sh 中选择 '1. 配置 Telegram' 输入 ID")
         return None
     with open(TELEGRAM_CONFIG, 'r') as f:
         return f.read().strip().split('=')[1]
@@ -23,14 +23,25 @@ def get_chat_id():
 # 读取账户列表并转换为地址
 def get_accounts():
     if not os.path.exists(CONFIG_FILE):
-        raise Exception("未找到 accounts.json，请添加账户")
-    with open(CONFIG_FILE, 'r') as f:
-        accounts = json.load(f)
-    w3 = Web3(Web3.HTTPProvider(CALDERA_RPC_URL))
-    return [{
-        'name': account['name'],
-        'address': w3.eth.account.from_key(account['private_key']).address
-    } for account in accounts]
+        print("警告：未找到 accounts.json，请在 bridge-bot.sh 中添加私钥")
+        return []
+    try:
+        with open(CONFIG_FILE, 'r') as f:
+            accounts = json.load(f)
+        if not isinstance(accounts, list):
+            print("错误：accounts.json 格式无效，重置为空列表")
+            with open(CONFIG_FILE, 'w') as f:
+                json.dump([], f)
+            return []
+        return [{
+            'name': account['name'],
+            'address': Web3(Web3.HTTPProvider(CALDERA_RPC_URL)).eth.account.from_key(account['private_key']).address
+        } for account in accounts]
+    except json.JSONDecodeError as e:
+        print(f"错误：accounts.json 解析失败 ({str(e)})，重置为空列表")
+        with open(CONFIG_FILE, 'w') as f:
+            json.dump([], f)
+        return []
 
 # 连接到 Caldera 区块链
 print("尝试连接到 Caldera 区块链...")
