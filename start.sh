@@ -7,7 +7,7 @@ CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
 # === 脚本路径和配置 ===
-ARB_SCRIPT="bridge.py"
+ARB_SCRIPT="uni-arb.py"
 OP_SCRIPT="op-uni.py"
 BOT_TOKEN="8070858648:AAGfrK1u0IaiXjr4f8TRbUDD92uBGTXdt38"
 CONFIG_FILE="accounts.json"
