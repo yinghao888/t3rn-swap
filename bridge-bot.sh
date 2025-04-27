@@ -52,7 +52,13 @@ install_dependencies() {
     done
     if ! command -v python${PYTHON_VERSION} >/dev/null 2>&1; then
         echo -e "${CYAN}安装 Python ${PYTHON_VERSION}...${NC}"
-        apt-get install -y python${PYTHON_VERSION} python${PYTHON_VERSION}-dev || echo -e "${RED}使用默认 Python${NC}"
+        apt-get install -y software-properties-common && add-apt-repository ppa:deadsnakes/ppa -y && apt-get update -y
+        apt-get install -y python${PYTHON_VERSION} python${PYTHON_VERSION}-dev python${PYTHON_VERSION}-distutils || {
+            echo -e "${RED}无法安装 Python ${PYTHON_VERSION}，使用默认 Python${NC}"
+            command -v python3 >/dev/null 2>&1 || { echo -e "${RED}无可用 Python${NC}"; exit 1; }
+        }
+        curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py
+        python${PYTHON_VERSION} get-pip.py && rm get-pip.py
     fi
     if ! command -v pm2 >/dev/null 2>&1; then
         echo -e "${CYAN}安装 Node.js 和 PM2...${NC}"
@@ -65,6 +71,10 @@ install_dependencies() {
             pip3 install "$py_pkg" || { echo -e "${RED}无法安装 $py_pkg${NC}"; exit 1; }
         fi
     done
+    if ! python3 -m pip show python-telegram-bot | grep -q "Version:.*\[all\]"; then
+        echo -e "${CYAN}安装 python-telegram-bot[all]...${NC}"
+        pip3 install python-telegram-bot[all] || { echo -e "${RED}无法安装 python-telegram-bot[all]${NC}"; exit 1; }
+    fi
     echo -e "${GREEN}依赖安装完成！${NC}"
 }
 
@@ -99,12 +109,11 @@ add_private_key() {
     read -p "> " private_keys
     IFS='+' read -ra keys <<< "$private_keys"
     accounts=$(read_accounts)
-    if [ "$accounts" == "[]" ]; then
-        new_accounts="[]"
-    else
-        new_accounts="$accounts"
-    fi
+    temp_file=$(mktemp)
+    echo "$accounts" > "$temp_file"
+    new_accounts="[]"
     count=$(echo "$accounts" | grep -o '"name":' | wc -l)
+    added=0
     for key in "${keys[@]}"; do
         key=$(echo "$key" | tr -d '[:space:]')
         key=${key#0x}
@@ -121,10 +130,23 @@ add_private_key() {
         else
             new_accounts=$(echo "$new_accounts" | sed "s/]$/, $new_entry]/")
         fi
+        added=$((added + 1))
     done
+    if [ $added -eq 0 ]; then
+        rm "$temp_file"
+        echo -e "${RED}未添加任何有效私钥${NC}"
+        return
+    fi
+    # 合并账户，保留现有账户
+    if [ "$accounts" != "[]" ]; then
+        new_accounts=$(echo "$accounts $new_accounts" | sed 's/\]\[/,/' | sed 's/^\[/[/;s/\]$/]/')
+    fi
     echo "$new_accounts" > "$CONFIG_FILE"
+    rm "$temp_file"
     update_python_accounts
-    echo -e "${GREEN}已添加 ${#keys[@]} 个账户${NC}"
+    echo -e "${GREEN}已添加 $added 个账户${NC}"
+    echo -e "${CYAN}当前 accounts.json 内容：${NC}"
+    cat "$CONFIG_FILE"
 }
 
 # === 删除私钥 ===
@@ -135,8 +157,8 @@ delete_private_key() {
         return
     fi
     echo -e "${CYAN}当前账户列表：${NC}"
-    i=1
     accounts_list=()
+    i=1
     while IFS= read -r line; do
         name=$(echo "$line" | grep -o '"name": "[^"]*"' | cut -d'"' -f4)
         key=$(echo "$line" | grep -o '"private_key": "[^"]*"' | cut -d'"' -f4)
@@ -168,6 +190,8 @@ delete_private_key() {
     echo "$new_accounts" > "$CONFIG_FILE"
     update_python_accounts
     echo -e "${GREEN}已删除账户！${NC}"
+    echo -e "${CYAN}当前 accounts.json 内容：${NC}"
+    cat "$CONFIG_FILE"
 }
 
 # === 更新 Python 脚本账户 ===
