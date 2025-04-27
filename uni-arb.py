@@ -5,6 +5,7 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 import os
 import telegram
+import json
 
 # === ANSI 颜色代码 ===
 LIGHT_BLUE = "\033[96m"
@@ -34,9 +35,11 @@ UNI_RPC_URLS = [
 ]
 
 # 合约地址
+UNI_TO_ARB_CONTRACT = "0x1cEAb5967E5f078Fa0FEC3DFfD0394Af1fEeBCC9"
 ARB_TO_UNI_CONTRACT = "0x22B65d0B9b59af4D3Ed59F18b9Ad53f5F4908B54"
 
 # 数据模板
+UNI_TO_ARB_DATA_TEMPLATE = "0x56591d5961726274000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000{address}0000000000000000000000000000000000000000000000000de08e51f0c04e00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000de0b6b3a7640000"
 ARB_TO_UNI_DATA_TEMPLATE = "0x56591d59756e6974000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000{address}0000000000000000000000000000000000000000000000000de06a4dded38400000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000de0b6b3a7640000"
 
 # 检测并过滤 RPC 的函数
@@ -76,7 +79,21 @@ def get_web3_instance(rpc_urls: List[str], chain_id: int) -> Web3:
             logger.warning(f"连接 {url} 失败: {e}")
     raise Exception("所有可用 RPC 均不可用")
 
+# 读取 Telegram Chat IDs
+def get_chat_ids():
+    if not os.path.exists('telegram.conf'):
+        logger.warning("未找到 telegram.conf，未配置 Telegram 通知")
+        return []
+    try:
+        with open('telegram.conf', 'r') as f:
+            config = json.load(f)
+        return config.get('chat_ids', [])
+    except Exception as e:
+        logger.error(f"读取 telegram.conf 失败: {e}")
+        return []
+
 # 优化参数
+GAS_LIMIT_UNI = 200000
 GAS_LIMIT_ARB = 200000
 MIN_GAS_PRICE = Web3.to_wei(0.05, 'gwei')
 
@@ -93,18 +110,30 @@ ARB_RPC_URLS = test_rpc_connectivity(ARB_RPC_URLS)
 
 # 账户初始化
 accounts: List[Dict] = []
-for acc in ACCOUNTS:
-    account = Web3(Web3.HTTPProvider(UNI_RPC_URLS[0])).eth.account.from_key(acc["private_key"])
-    address = account.address[2:]
-    accounts.append({
-        "name": acc["name"],
-        "private_key": acc["private_key"],
-        "address": account.address,
-        "address_no_prefix": address,
-        "arb_data": ARB_TO_UNI_DATA_TEMPLATE.format(address=address),
-        "arb_pause_until": 0,
-        "arb_to_uni_last": 0
-    })
+if not ACCOUNTS:
+    logger.error("账户列表为空，请在 bridge-bot.sh 中添加私钥")
+else:
+    for acc in ACCOUNTS:
+        try:
+            if not acc["private_key"]:
+                logger.warning(f"账户 {acc['name']} 私钥为空，跳过")
+                continue
+            account = Web3(Web3.HTTPProvider(UNI_RPC_URLS[0])).eth.account.from_key(acc["private_key"])
+            address = account.address[2:]
+            accounts.append({
+                "name": acc["name"],
+                "private_key": acc["private_key"],
+                "address": account.address,
+                "address_no_prefix": address,
+                "uni_data": UNI_TO_ARB_DATA_TEMPLATE.format(address=address),
+                "arb_data": ARB_TO_UNI_DATA_TEMPLATE.format(address=address),
+                "uni_pause_until": 0,
+                "arb_pause_until": 0,
+                "uni_to_arb_last": 0,
+                "arb_to_uni_last": 0
+            })
+        except Exception as e:
+            logger.error(f"初始化账户 {acc['name']} 失败: {e}")
 
 # 获取动态 Gas Price
 def get_dynamic_gas_price(w3_instance) -> int:
@@ -115,6 +144,56 @@ def get_dynamic_gas_price(w3_instance) -> int:
     except Exception as e:
         logger.warning(f"获取 Gas Price 失败，使用默认值: {e}")
         return MIN_GAS_PRICE
+
+# UNI -> ARB 跨链函数
+def bridge_uni_to_arb(account_info: Dict) -> bool:
+    global success_count, total_success_count
+    current_time = time.time()
+    if current_time < account_info["uni_to_arb_last"] + REQUEST_INTERVAL:
+        return False
+    if current_time < account_info["uni_pause_until"]:
+        return False
+    try:
+        w3_uni = get_web3_instance(UNI_RPC_URLS, chain_id=1301)
+        amount_wei = w3_uni.to_wei Rosepaliawei(AMOUNT_ETH, 'ether')
+        balance = w3_uni.eth.get_balance(account_info["address"])
+        gas_price = get_dynamic_gas_price(w3_uni)
+        total_cost = amount_wei + (gas_price * GAS_LIMIT_UNI)
+        if balance < total_cost:
+            logger.warning(f"{account_info['name']} UNI 余额不足，暂停 UNI -> ARB 1 分钟")
+            account_info["uni_pause_until"] = time.time() + 60
+            return False
+        nonce = w3_uni.eth.get_transaction_count(account_info["address"])
+        tx = {
+            'from': account_info["address"],
+            'to': UNI_TO_ARB_CONTRACT,
+            'value': amount_wei,
+            'nonce': nonce,
+            'gas': GAS_LIMIT_UNI,
+            'gasPrice': gas_price,
+            'chainId': 1301,
+            'data': account_info["uni_data"]
+        }
+        signed_tx = w3_uni.eth.account.sign_transaction(tx, account_info["private_key"])
+        tx_hash = w3_uni.eth.send_raw_transaction(signed_tx.raw_transaction)
+        tx_receipt = w3_uni.eth.wait_for_transaction_receipt(tx_hash, timeout=30)
+        success_count += 1
+        total_success_count += 1
+        account_info["uni_to_arb_last"] = current_time
+        logger.info(f"{LIGHT_BLUE}{account_info['name']} UNI -> ARB 成功{RESET}")
+        chat_ids = get_chat_ids()
+        if chat_ids:
+            bot = telegram.Bot(token="8070858648:AAGfrK1u0IaiXjr4f8TRbUDD92uBGTXdt38")
+            for chat_id in chat_ids:
+                try:
+                    bot.send_message(chat_id=chat_id, text=f"{account_info['name']} UNI -> ARB 跨链成功！")
+                    logger.info(f"通知发送成功到 {chat_id}")
+                except Exception as e:
+                    logger.error(f"通知发送失败到 {chat_id}: {e}")
+        return True
+    except Exception as e:
+        logger.error(f"{account_info['name']} UNI -> ARB 失败: {e}")
+        return False
 
 # ARB -> UNI 跨链函数
 def bridge_arb_to_uni(account_info: Dict) -> bool:
@@ -152,9 +231,15 @@ def bridge_arb_to_uni(account_info: Dict) -> bool:
         total_success_count += 1
         account_info["arb_to_uni_last"] = current_time
         logger.info(f"{LIGHT_RED}{account_info['name']} ARB -> UNI 成功{RESET}")
-        if os.path.exists('telegram.conf'):
+        chat_ids = get_chat_ids()
+        if chat_ids:
             bot = telegram.Bot(token="8070858648:AAGfrK1u0IaiXjr4f8TRbUDD92uBGTXdt38")
-            bot.send_message(chat_id=open('telegram.conf', 'r').read().strip().split('=')[1], text=f"{account_info['name']} ARB -> UNI 跨链成功！")
+            for chat_id in chat_ids:
+                try:
+                    bot.send_message(chat_id=chat_id, text=f"{account_info['name']} ARB -> UNI 跨链成功！")
+                    logger.info(f"通知发送成功到 {chat_id}")
+                except Exception as e:
+                    logger.error(f"通知发送失败到 {chat_id}: {e}")
         return True
     except Exception as e:
         logger.error(f"{account_info['name']} ARB -> UNI 失败: {e}")
@@ -166,10 +251,14 @@ def process_account(account_info: Dict):
     while True:
         if direction == "arb_to_uni":
             bridge_arb_to_uni(account_info)
+            bridge_uni_to_arb(account_info)
 
 # 主函数
 def main():
-    logger.info(f"开始为 {len(accounts)} 个账户执行 ARB->UNI 无限循环跨链，每次 {AMOUNT_ETH} ETH")
+    if not accounts:
+        logger.error("没有可用的账户，退出程序")
+        return
+    logger.info(f"开始为 {len(accounts)} 个账户执行 UNI-ARB 无限循环跨链，每次 {AMOUNT_ETH} ETH")
     with ThreadPoolExecutor(max_workers=min(len(accounts), 30)) as executor:
         executor.map(process_account, accounts)
 
