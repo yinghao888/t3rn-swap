@@ -31,7 +31,6 @@ ARB_RPC_URLS = [
 UNI_RPC_URLS = [
     "https://unichain-sepolia-rpc.publicnode.com",
     "https://unichain-sepolia.drpc.org",
-    "https://sepolia.unichain.org",
 ]
 
 # 合约地址
