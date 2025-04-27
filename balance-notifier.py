@@ -15,7 +15,8 @@ SYMBOL = "BRN"
 # 读取 Telegram Chat ID
 def get_chat_id():
     if not os.path.exists(TELEGRAM_CONFIG):
-        raise Exception("未配置 Telegram 用户 ID，请在 bridge-bot.sh 中配置")
+        print("警告：未配置 Telegram 用户 ID，请在 bridge-bot.sh 中选择 '3. 配置 Telegram' 输入 ID")
+        return None
     with open(TELEGRAM_CONFIG, 'r') as f:
         return f.read().strip().split('=')[1]
 
@@ -62,6 +63,9 @@ def format_time(seconds):
 
 # 发送 Telegram 消息的异步函数
 async def send_balance_update(bot, previous_caldera_balance, interval_count, start_time, initial_caldera_balance, accounts, chat_id):
+    if chat_id is None:
+        print("跳过 Telegram 通知：未配置 Chat ID")
+        return previous_caldera_balance
     print(f"第 {interval_count} 次更新开始")
     caldera_balance = get_caldera_balance(accounts)
     elapsed_time = time.time() - start_time
