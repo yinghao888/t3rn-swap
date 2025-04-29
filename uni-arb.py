@@ -4,6 +4,7 @@ from typing import List, Dict
 import logging
 from concurrent.futures import ThreadPoolExecutor
 import os
+import json
 
 # === ANSI 颜色代码 ===
 LIGHT_BLUE = "\033[96m"
@@ -14,33 +15,40 @@ RESET = "\033[0m"
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
 logger = logging.getLogger()
 
-# === 可自定义参数 ===
-ACCOUNTS = []
-AMOUNT_ETH = 1  # 每次跨链金额（单位：ETH）
-REQUEST_INTERVAL = 1  # 同一方向请求间隔（秒）
+# 从 config.json 加载配置
+with open("config.json", "r") as f:
+    config = json.load(f)
+REQUEST_INTERVAL = config["REQUEST_INTERVAL"]
+AMOUNT_ETH = config["AMOUNT_ETH"]
+UNI_TO_ARB_DATA_TEMPLATE = config["UNI_TO_ARB_DATA_TEMPLATE"]
+ARB_TO_UNI_DATA_TEMPLATE = config["ARB_TO_UNI_DATA_TEMPLATE"]
 
-# Arbitrum Sepolia 测试网 RPC 配置
-ARB_RPC_URLS = [
-    "https://arbitrum-sepolia-rpc.publicnode.com",
-    "https://sepolia-rollup.arbitrum.io/rpc",
-    "https://arbitrum-sepolia.drpc.org",
-]
-
-# Unichain Sepolia 测试网 RPC 配置
-UNI_RPC_URLS = [
-    "https://unichain-sepolia-rpc.publicnode.com",
-    "https://unichain-sepolia.drpc.org",
-]
+# 从 rpc_config.json 加载 RPC 配置
+with open("rpc_config.json", "r") as f:
+    rpc_config = json.load(f)
+ARB_RPC_URLS = rpc_config["ARB_RPC_URLS"]
+UNI_RPC_URLS = rpc_config["UNI_RPC_URLS"]
 
 # 合约地址
 UNI_TO_ARB_CONTRACT = "0x1cEAb5967E5f078Fa0FEC3DFfD0394Af1fEeBCC9"
 ARB_TO_UNI_CONTRACT = "0x22B65d0B9b59af4D3Ed59F18b9Ad53f5F4908B54"
 
-# 数据模板
-UNI_TO_ARB_DATA_TEMPLATE = "0x56591d5961726274000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000{address}0000000000000000000000000000000000000000000000000de08e51f0c04e00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000de0b6b3a7640000"
-ARB_TO_UNI_DATA_TEMPLATE = "0x56591d59756e6974000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000{address}0000000000000000000000000000000000000000000000000de06a4dded38400000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000de0b6b3a7640000"
-
 # 检测并过滤 RPC 的函数
+def test_rpc_connectivity(rpc_urls: List[str], max_attempts: int = 5) -> List[str]:
+    available_rpcs = []
+    for url in rpc_urls:
+        logger.info(f"开始检测 RPC: {url}")
+        for attempt in range(max_attempts):
+            try:
+                w3 = Web3(Web3.HTTPProvider(url, request_kwargs={'timeout': 10}))
+                if w3.is_connected():
+                    logger.info(f"RPC {url} 连接成功")
+                    available_rpcs.append(url)
+                    break
+                else:
+                    logger.warning(f"RPC {url} 第 {attempt + 1} 次尝试失败")
+            except Exception as e:
+                logger.warning(f"RPC {url} 第 {attempt # === 检测并过滤 RPC 的函数 ===
 def test_rpc_connectivity(rpc_urls: List[str], max_attempts: int = 5) -> List[str]:
     available_rpcs = []
     for url in rpc_urls:
@@ -64,7 +72,7 @@ def test_rpc_connectivity(rpc_urls: List[str], max_attempts: int = 5) -> List[st
         exit(1)
     return available_rpcs
 
-# 轮询初始化 Web3 实例的函数
+# === 轮询初始化 Web3 实例的函数 ===
 def get_web3_instance(rpc_urls: List[str], chain_id: int) -> Web3:
     for url in rpc_urls:
         try:
@@ -77,23 +85,23 @@ def get_web3_instance(rpc_urls: List[str], chain_id: int) -> Web3:
             logger.warning(f"连接 {url} 失败: {e}")
     raise Exception("所有可用 RPC 均不可用")
 
-# 优化参数
+# === 优化参数 ===
 GAS_LIMIT_UNI = 200000
 GAS_LIMIT_ARB = 200000
 MIN_GAS_PRICE = Web3.to_wei(0.05, 'gwei')
 
-# 全局计数器
+# === 全局计数器 ===
 success_count = 0
 total_success_count = 0
 start_time = time.time()
 
-# 初始化并检测 RPC
+# === 初始化并检测 RPC ===
 logger.info("开始检测 Unichain Sepolia RPC...")
 UNI_RPC_URLS = test_rpc_connectivity(UNI_RPC_URLS)
 logger.info("开始检测 Arbitrum Sepolia RPC...")
 ARB_RPC_URLS = test_rpc_connectivity(ARB_RPC_URLS)
 
-# 账户初始化
+# === 账户初始化 ===
 accounts: List[Dict] = []
 if not ACCOUNTS:
     logger.error("账户列表为空，请在 bridge-bot.sh 中添加私钥")
@@ -122,7 +130,7 @@ else:
         except Exception as e:
             logger.error(f"初始化账户 {acc['name']} 失败: {e}")
 
-# 获取动态 Gas Price
+# === 获取动态 Gas Price ===
 def get_dynamic_gas_price(w3_instance) -> int:
     try:
         latest_block = w3_instance.eth.get_block('latest')
@@ -132,7 +140,7 @@ def get_dynamic_gas_price(w3_instance) -> int:
         logger.warning(f"获取 Gas Price 失败，使用默认值: {e}")
         return MIN_GAS_PRICE
 
-# UNI -> ARB 跨链函数
+# === UNI -> ARB 跨链函数 ===
 def bridge_uni_to_arb(account_info: Dict) -> bool:
     global success_count, total_success_count
     current_time = time.time()
@@ -173,7 +181,7 @@ def bridge_uni_to_arb(account_info: Dict) -> bool:
         logger.error(f"{account_info['name']} UNI -> ARB 失败: {e}")
         return False
 
-# ARB -> UNI 跨链函数
+# === ARB -> UNI 跨链函数 ===
 def bridge_arb_to_uni(account_info: Dict) -> bool:
     global success_count, total_success_count
     current_time = time.time()
@@ -214,7 +222,7 @@ def bridge_arb_to_uni(account_info: Dict) -> bool:
         logger.error(f"{account_info['name']} ARB -> UNI 失败: {e}")
         return False
 
-# 并行执行跨链
+# === 并行执行跨链 ===
 def process_account(account_info: Dict):
     direction = open("direction.conf", "r").read().strip()
     while True:
@@ -222,7 +230,7 @@ def process_account(account_info: Dict):
             bridge_arb_to_uni(account_info)
             bridge_uni_to_arb(account_info)
 
-# 主函数
+# === 主函数 ===
 def main():
     if not accounts:
         logger.error("没有可用的账户，退出程序")
