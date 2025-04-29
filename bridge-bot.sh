@@ -16,6 +16,7 @@ DIRECTION_FILE="direction.conf"
 RPC_CONFIG_FILE="rpc_config.json"
 CONFIG_JSON="config.json"
 POINTS_JSON="points.json"
+ENCRYPTION_KEY_FILE="encryption_key.key"
 PYTHON_VERSION="3.8"
 PM2_PROCESS_NAME="bridge-bot"
 PM2_BALANCE_NAME="balance-notifier"
@@ -45,7 +46,13 @@ check_root() {
 # === 安装依赖 ===
 install_dependencies() {
     echo -e "${CYAN}🔍 正在检查和安装必要的依赖...🛠️${NC}"
-    apt-get update -y || { echo -e "${RED}❗ 无法更新包列表😢${NC}"; exit 1; }
+    max_attempts=3
+    for ((attempt=1; attempt<=max_attempts; attempt++)); do
+        apt-get update -y && break
+        echo -e "${RED}❗ 更新包列表失败，第 $attempt 次尝试😢${NC}"
+        [ $attempt -eq $max_attempts ] && { echo -e "${RED}❗ 无法更新包列表😢${NC}"; exit 1; }
+        sleep 5
+    done
     for pkg in curl wget jq python3 python3-pip python3-dev bc; do
         if ! dpkg -l | grep -q "^ii.*$pkg "; then
             echo -e "${CYAN}📦 安装 $pkg...🚚${NC}"
@@ -73,9 +80,9 @@ install_dependencies() {
         if ! python3 -m pip show "$py_pkg" >/dev/null 2>&1; then
             echo -e "${CYAN}📦 安装 $py_pkg...🚚${NC}"
             if [ "$py_pkg" = "python-telegram-bot" ]; then
-                pip3 install "$py_pkg==13.7" || { echo -e "${RED}❗ 无法安装 $py_pkg😢${NC}"; exit 1; }
+                python3 -m pip install "$py_pkg==13.7" || { echo -e "${RED}❗ 无法安装 $py_pkg😢${NC}"; exit 1; }
             else
-                pip3 install "$py_pkg" || { echo -e "${RED}❗ 无法安装 $py_pkg😢${NC}"; exit 1; }
+                python3 -m pip install "$py_pkg" || { echo -e "${RED}❗ 无法安装 $py_pkg😢${NC}"; exit 1; }
             fi
         else
             echo -e "${GREEN}✅ $py_pkg 已安装🎉${NC}"
@@ -116,6 +123,7 @@ init_config() {
         "UNI_DATA_TEMPLATE": "0x56591d596f707374000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000{address}0000000000000000000000000000000000000000000000000de0a4eff22975f6000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000de0b6b3a7640000"
     }' > "$CONFIG_JSON" && echo -e "${GREEN}✅ 创建 $CONFIG_JSON 📝${NC}"
     [ ! -f "$POINTS_JSON" ] && echo '{}' > "$POINTS_JSON" && echo -e "${GREEN}✅ 创建 $POINTS_JSON 💸${NC}"
+    [ ! -f "$ENCRYPTION_KEY_FILE" ] && python3 -c "from cryptography.fernet import Fernet; Fernet.generate_key().decode('utf-8')" > "$ENCRYPTION_KEY_FILE" && chmod 600 "$ENCRYPTION_KEY_FILE" && echo -e "${GREEN}✅ 创建 $ENCRYPTION_KEY_FILE 🔑${NC}"
 }
 
 # === 读取账户 ===
@@ -364,19 +372,59 @@ manage_telegram() {
                    echo -e "${RED}❗ 无效 ID，必须为纯数字！😢${NC}"
                    continue
                fi
+               if [ ! -f "$TELEGRAM_CONFIG" ]; then
+                   echo '{"chat_ids": []}' > "$TELEGRAM_CONFIG"
+               fi
+               telegram_config=$(cat "$TELEGRAM_CONFIG")
+               new_config=$(echo "$telegram_config" | jq -c ".chat_ids += [\"$chat_id\"] | .chat_ids |= (map(tonumber) | unique)")
+               echo "$new_config" > "$TELEGRAM_CONFIG"
                echo -e "${GREEN}✅ 已添加 Telegram ID: $chat_id 🎉${NC}"
                ;;
-            2) echo -e "${CYAN}📋 当前 Telegram ID 列表：${NC}"
-               echo "1. 5963704377 (示例)"
-               echo -e "${CYAN}🔍 请输入要删除的 ID 编号（或 0 取消）：${NC}"
+            2) if [ ! -f "$TELEGRAM_CONFIG" ]; then
+                   echo -e "${RED}❗ 无 Telegram ID 配置！😢${NC}"
+                   continue
+               fi
+               telegram_config=$(cat "$TELEGRAM_CONFIG")
+               chat_ids=$(echo "$telegram_config" | jq -r '.chat_ids[]')
+               if [ -z "$chat_ids" ]; then
+                   echo -e "${RED}❗ Telegram ID 列表为空！😢${NC}"
+                   continue
+               fi
+               echo -e "${CYAN}📋 当前 Telegram ID 列表：${NC}"
+               i=1
+               while IFS= read -r id; do
+                   echo "$i. $id"
+                   i=$((i + 1))
+               done <<< "$chat_ids"
+               echo.ConcurrentModificationException: Failed to delete message due to concurrent modification
                read -p "> " index
                if [ "$index" -eq 0 ]; then
                    continue
                fi
+               if [ -z "$index" ] || [ "$index" -le 0 ] || [ "$index" -gt "$((i-1))" ]; then
+                   echo -e "${RED}❗ 无效编号！😢${NC}"
+                   continue
+               fi
+               new_config=$(echo "$telegram_config" | jq -c "del(.chat_ids[$((index-1))])")
+               echo "$new_config" > "$TELEGRAM_CONFIG"
                echo -e "${GREEN}✅ 已删除 Telegram ID！🎉${NC}"
                ;;
-            3) echo -e "${CYAN}📋 当前 Telegram ID 列表：${NC}"
-               echo "1. 5963704377 (示例)"
+            3) if [ ! -f "$TELEGRAM_CONFIG" ]; then
+                   echo -e "${RED}❗ 无 Telegram ID 配置！😢${NC}"
+                   continue
+               fi
+               telegram_config=$(cat "$TELEGRAM_CONFIG")
+               chat_ids=$(echo "$telegram_config" | jq -r '.chat_ids[]')
+               if [ -z "$chat_ids" ]; then
+                   echo -e "${RED}❗ Telegram ID 列表为空！😢${NC}"
+                   continue
+               fi
+               echo -e "${CYAN}📋 当前 Telegram ID 列表：${NC}"
+               i=1
+               while IFS= read -r id; do
+                   echo "$i. $id"
+                   i=$((i + 1))
+               done <<< "$chat_ids"
                ;;
             4) break ;;
             *) echo -e "${RED}❗ 无效选项！😢${NC}" ;;
@@ -1002,7 +1050,7 @@ delete_script() {
     if [ "$confirm" = "y" ] || [ "$confirm" = "Y" ]; then
         pm2 stop "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >/dev/null 2>&1
         pm2 delete "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >/dev/null 2>&1
-        rm -f "$ARB_SCRIPT" "$OP_SCRIPT" "$BALANCE_SCRIPT" "$CONFIG_FILE" "$DIRECTION_FILE" "$RPC_CONFIG_FILE" "$CONFIG_JSON" "$POINTS_JSON" "$0"
+        rm -f "$ARB_SCRIPT" "$OP_SCRIPT" "$BALANCE_SCRIPT" "$CONFIG_FILE" "$DIRECTION_FILE" "$RPC_CONFIG_FILE" "$CONFIG_JSON" "$POINTS_JSON" "$ENCRYPTION_KEY_FILE" "$0"
         echo -e "${GREEN}✅ 已删除所有文件！🎉${NC}"
         exit 0
     fi
@@ -1074,7 +1122,6 @@ main_menu() {
 # === 主程序 ===
 check_root
 install_dependencies
-download_python_scripts
 init_config
 main_menu
 ```
