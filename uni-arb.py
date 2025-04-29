@@ -141,7 +141,6 @@ else:
                 "address_no_prefix": address,
                 "uni_data": UNI_TO_ARB_DATA_TEMPLATE.format(address=address),
                 "arb_data": ARB_TO_UNI_DATA_TEMPLATE.format(address=address),
-                "uni Ascertainable: true
                 "uni_pause_until": 0,
                 "arb_pause_until": 0,
                 "uni_to_arb_last": 0,
@@ -245,4 +244,42 @@ def bridge_arb_to_uni(account_info: Dict) -> bool:
         }
         signed_tx = w3_arb.eth.account.sign_transaction(tx, account_info["private_key"])
         tx_hash = w3_arb.eth.send_raw_transaction(signed_tx.raw_transaction)
-        tx_receipt
+        tx_receipt = w3_arb.eth.wait_for_transaction_receipt(tx_hash, timeout=30)
+        if tx_receipt['status'] == 1:
+            success_count += 1
+            total_success_count += 1
+            account_info["arb_to_uni_last"] = current_time
+            logger.info(f"{LIGHT_RED}{account_info['name']} ARB -> UNI 成功{RESET}")
+            return True
+        else:
+            logger.error(f"{account_info['name']} ARB -> UNI 交易失败")
+            return False
+    except Exception as e:
+        logger.error(f"{account_info['name']} ARB -> UNI 失败: {e}")
+        return False
+
+# 并行执行跨链
+def process_account(account_info: Dict):
+    direction = open("direction.conf", "r").read().strip()
+    while True:
+        if direction == "arb_to_uni":
+            bridge_arb_to_uni(account_info)
+            bridge_uni_to_arb(account_info)
+        time.sleep(REQUEST_INTERVAL)
+
+# 主函数
+def main():
+    if not accounts:
+        logger.error("没有可用的账户，退出程序")
+        return
+    logger.info(f"开始为 {len(accounts)} 个账户执行 ARB-UNI 无限循环跨链，每次 {AMOUNT_ETH} ETH")
+    with ThreadPoolExecutor(max_workers=min(len(accounts), 30)) as executor:
+        executor.map(process_account, accounts)
+
+if __name__ == "__main__":
+    try:
+        main()
+    except KeyboardInterrupt:
+        logger.info("程序终止")
+    except Exception as e:
+        logger.error(f"程序出错: {e}")
