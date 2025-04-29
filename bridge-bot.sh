@@ -1,4 +1,3 @@
-```bash
 #!/bin/bash
 
 # === 颜色定义 ===
@@ -253,7 +252,7 @@ update_points() {
 
 # === 添加私钥 ===
 add_private_key() {
-    echo -e "${CYAN}🔑 请输入私钥（带或不带 0x，多个用 + 分隔，例如 key1+key2）：${NC}"
+    echo -e "${CYAN}🔑 请输入私钥（带或不带 0x，多个用 + 分隔，例如 key1+key2）：${NC}" | tee -a "$INSTALL_LOG"
     read -p "> " private_keys
     IFS='+' read -ra keys <<< "$private_keys"
     accounts=$(read_accounts)
@@ -540,7 +539,7 @@ recharge_points() {
         return
     fi
     account=$(echo "${accounts_list[$((index-1))]}" | jq -r '.private_key')
-    address=$(python3 -c "from web3 import Web3; print(Web3(Web3.HTTPProvider('https://unichain-sepolia-rpc.publicnode.com')).eth.account.from_key('$account').address)" 2>/dev/null)
+    address=$(python3 -c "from web3 import Web3; print(Web3(Web3.HTTPProvider('https://unichain-sepolia-rpc.publicnode.com')).eth.account.from_key('$account').address)" 2>>"$INSTALL_LOG")
     if [ -z "$address" ]; then
         echo -e "${RED}❗ 无法获取账户地址！😢${NC}" | tee -a "$INSTALL_LOG"
         return
@@ -564,7 +563,7 @@ recharge_points() {
         for url in $rpc_urls; do
             balance=$(python3 -c "from web3 import Web3; w3 = Web3(Web3.HTTPProvider('$url')); print(w3.eth.get_balance('$address'))" 2>>"$INSTALL_LOG")
             if [ -n "$balance" ]; then
-                balance_eth=$(python3 -c "print($balance / 10**18)")
+                balance_eth=$(python3 -c "print($balance / 10**18)" 2>>"$INSTALL_LOG")
                 balances+=("$chain_name: $balance_eth ETH")
                 if [ "$balance" -ge "$amount_wei" ]; then
                     sufficient_chains+=("$chain_name $rpc_urls $chain_id")
@@ -1049,4 +1048,149 @@ update_python_accounts() {
         fi
     done
     echo -e "${GREEN}✅ 已更新 $ARB_SCRIPT 和 $OP_SCRIPT 的账户！🎉${NC}" | tee -a "$INSTALL_LOG"
-    echo -e "${CYAN}📋 当前 $ARB_SCRIPT ACCOUNTS 内容：${NC}" | tee -a "$INSTALL
+    echo -e "${CYAN}📋 当前 $ARB_SCRIPT ACCOUNTS 内容：${NC}" | tee -a "$INSTALL_LOG"
+    grep "^ACCOUNTS =" "$ARB_SCRIPT" | tee -a "$INSTALL_LOG"
+    echo -e "${CYAN}📋 当前 $OP_SCRIPT ACCOUNTS 内容：${NC}" | tee -a "$INSTALL_LOG"
+    grep "^ACCOUNTS =" "$OP_SCRIPT" | tee -a "$INSTALL_LOG"
+}
+
+# === 配置跨链方向 ===
+select_direction() {
+    echo -e "${CYAN}🌉 请选择跨链方向：${NC}" | tee -a "$INSTALL_LOG"
+    echo "1. ARB -> UNI 🌟"
+    echo "2. OP <-> UNI 🌟"
+    read -p "> " choice
+    case $choice in
+        1)
+            echo "arb_to_uni" > "$DIRECTION_FILE"
+            echo -e "${GREEN}✅ 设置为 ARB -> UNI 🎉${NC}" | tee -a "$INSTALL_LOG"
+            ;;
+        2)
+            echo "op_to_uni" > "$DIRECTION_FILE"
+            echo -e "${GREEN}✅ 设置为 OP <-> UNI 🎉${NC}" | tee -a "$INSTALL_LOG"
+            ;;
+        *)
+            echo -e "${RED}❗ 无效选项，默认 ARB -> UNI😢${NC}" | tee -a "$INSTALL_LOG"
+            echo "arb_to_uni" > "$DIRECTION_FILE"
+            ;;
+    esac
+}
+
+# === 查看日志 ===
+view_logs() {
+    echo -e "${CYAN}📜 显示 PM2 日志...${NC}" | tee -a "$INSTALL_LOG"
+    pm2 logs --lines 50 | tee -a "$INSTALL_LOG"
+    echo -e "${CYAN}✅ 日志显示完成，按回车返回 ⏎${NC}" | tee -a "$INSTALL_LOG"
+    read -p "按回车继续... ⏎"
+}
+
+# === 停止运行 ===
+stop_running() {
+    echo -e "${CYAN}🛑 正在停止跨链脚本和余额查询...${NC}" | tee -a "$INSTALL_LOG"
+    pm2 stop "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >> "$INSTALL_LOG" 2>&1
+    pm2 delete "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >> "$INSTALL_LOG" 2>&1
+    echo -e "${GREEN}✅ 已停止所有脚本！🎉${NC}" | tee -a "$INSTALL_LOG"
+}
+
+# === 删除脚本 ===
+delete_script() {
+    echo -e "${RED}⚠️ 警告：将删除所有脚本和配置！继续？(y/n)${NC}" | tee -a "$INSTALL_LOG"
+    read -p "> " confirm
+    if [ "$confirm" = "y" ] || [ "$confirm" = "Y" ]; then
+        pm2 stop "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >> "$INSTALL_LOG" 2>&1
+        pm2 delete "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >> "$INSTALL_LOG" 2>&1
+        rm -f "$ARB_SCRIPT" "$OP_SCRIPT" "$BALANCE_SCRIPT" "$CONFIG_FILE" "$DIRECTION_FILE" "$RPC_CONFIG_FILE" "$CONFIG_JSON" "$POINTS_JSON" "$ENCRYPTION_KEY_FILE" "$TELEGRAM_CONFIG" "$0"
+        echo -e "${GREEN}✅ 已删除所有文件！🎉${NC}" | tee -a "$INSTALL_LOG"
+        exit 0
+    fi
+}
+
+# === 检查环境 ===
+check_environment() {
+    echo -e "${CYAN}🔍 检查运行环境...${NC}" | tee -a "$INSTALL_LOG"
+    if ! command -v jq >/dev/null 2>&1; then
+        echo -e "${RED}❗ jq 未安装，请检查依赖安装😢${NC}" | tee -a "$INSTALL_LOG"
+        exit 1
+    fi
+    if ! command -v pm2 >/dev/null 2>&1; then
+        echo -e "${RED}❗ pm2 未安装，请检查依赖安装😢${NC}" | tee -a "$INSTALL_LOG"
+        exit 1
+    fi
+    PYTHON_BIN=$(command -v python${PYTHON_VERSION} || command -v python3)
+    if ! $PYTHON_BIN -m pip show web3 >/dev/null 2>&1; then
+        echo -e "${RED}❗ web3 包未安装，请检查依赖安装😢${NC}" | tee -a "$INSTALL_LOG"
+        exit 1
+    fi
+    if ! $PYTHON_BIN -m pip show python-telegram-bot >/dev/null 2>&1; then
+        echo -e "${RED}❗ python-telegram-bot 包未安装，请检查依赖安装😢${NC}" | tee -a "$INSTALL_LOG"
+        exit 1
+    fi
+    if ! $PYTHON_BIN -m pip show cryptography >/dev/null 2>&1; then
+        echo -e "${RED}❗ cryptography 包未安装，请检查依赖安装😢${NC}" | tee -a "$INSTALL_LOG"
+        exit 1
+    fi
+    echo -e "${GREEN}✅ 环境检查通过！🎉${NC}" | tee -a "$INSTALL_LOG"
+}
+
+# === 一键启动 ===
+auto_start() {
+    check_root
+    install_dependencies
+    download_python_scripts
+    init_config
+    check_environment
+    banner
+    echo -e "${CYAN}🚀 一键启动配置完成，开始运行脚本...${NC}" | tee -a "$INSTALL_LOG"
+    direction=$(cat "$DIRECTION_FILE" 2>/dev/null || echo "arb_to_uni")
+    PYTHON_BIN=$(command -v python${PYTHON_VERSION} || command -v python3)
+    if [ "$direction" = "arb_to_uni" ]; then
+        pm2 start "$ARB_SCRIPT" --name "$PM2_PROCESS_NAME" --interpreter "$PYTHON_BIN" >> "$INSTALL_LOG" 2>&1
+    else
+        pm2 start "$OP_SCRIPT" --name "$PM2_PROCESS_NAME" --interpreter "$PYTHON_BIN" >> "$INSTALL_LOG" 2>&1
+    fi
+    pm2 start "$BALANCE_SCRIPT" --name "$PM2_BALANCE_NAME" --interpreter "$PYTHON_BIN" >> "$INSTALL_LOG" 2>&1
+    pm2 save >> "$INSTALL_LOG" 2>&1
+    echo -e "${GREEN}✅ 脚本已通过 PM2 启动！使用 'pm2 logs' 查看日志🎉${NC}" | tee -a "$INSTALL_LOG"
+}
+
+# === 主菜单 ===
+main_menu() {
+    while true; do
+        banner
+        echo -e "${CYAN}🌟 主菜单：${NC}" | tee -a "$INSTALL_LOG"
+        echo "1. 一键启动 🚀"
+        echo "2. 私钥管理 🔑"
+        echo "3. 充值点数 💸"
+        echo "4. RPC 管理 ⚙️"
+        echo "5. 速度管理 ⏱️"
+        echo "6. 金额管理 💰"
+        echo "7. Data 管理 📝"
+        echo "8. 配置跨链方向 🌉"
+        echo "9. 查看日志 📜"
+        echo "10. 停止运行 🛑"
+        echo "11. 删除脚本 ⚠️"
+        echo "12. Telegram ID 管理 🌐"
+        echo "13. 退出 🔚"
+        read -p "> " choice
+        case $choice in
+            1) auto_start ;;
+            2) manage_private_keys ;;
+            3) recharge_points ;;
+            4) manage_rpc ;;
+            5) manage_speed ;;
+            6) manage_amount ;;
+            7) manage_data ;;
+            8) select_direction ;;
+            9) view_logs ;;
+            10) stop_running ;;
+            11) delete_script ;;
+            12) manage_telegram ;;
+            13) echo -e "${GREEN}✅ 退出脚本，感谢使用！🎉${NC}" | tee -a "$INSTALL_LOG"; exit 0 ;;
+            *) echo -e "${RED}❗ 无效选项！😢${NC}" | tee -a "$INSTALL_LOG" ;;
+        esac
+        read -p "按回车继续... ⏎"
+    done
+}
+
+# === 脚本入口 ===
+main_menu
