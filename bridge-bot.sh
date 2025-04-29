@@ -479,31 +479,50 @@ recharge_points() {
             rpc_url=$(jq -r '.OP_RPC_URLS[0]' "$RPC_CONFIG_FILE")
             chain_id=11155420
         fi
-        tx_hash=$(python3 -c "
+        # 使用 heredoc 避免引号问题
+        tx_hash=$(cat << 'EOF' | python3 2>/dev/null
+import sys
 from web3 import Web3
-w3 = Web3(Web3.HTTPProvider('$rpc_url'))
-account = w3.eth.account.from_key('$account')
-nonce = w3.eth.get_transaction_count('$address')
-gas_price = w3.eth.gas_price
-tx = {
-    'to': '$FEE_ADDRESS',
-    'value': $amount_wei,
-    'nonce': nonce,
-    'gas': 21000,
-    'gasPrice': gas_price,
-    'chainId': $chain_id
-}
-signed_tx = w3.eth.account.sign_transaction(tx, '$account')
-tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction).hex()
-print(tx_hash)
-" 2>/dev/null)
+rpc_url = '$rpc_url'
+account = '$account'
+address = '$address'
+fee_address = '$FEE_ADDRESS'
+amount_wei = $amount_wei
+chain_id = $chain_id
+try:
+    w3 = Web3(Web3.HTTPProvider(rpc_url))
+    account = w3.eth.account.from_key(account)
+    nonce = w3.eth.get_transaction_count(address)
+    gas_price = w3.eth.gas_price
+    tx = {
+        'to': fee_address,
+        'value': int(amount_wei),
+        'nonce': nonce,
+        'gas': 21000,
+        'gasPrice': gas_price,
+        'chainId': int(chain_id)
+    }
+    signed_tx = w3.eth.account.sign_transaction(tx, account.key)
+    tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction).hex()
+    print(tx_hash)
+except Exception as e:
+    sys.exit(1)
+EOF
+)
         if [ $? -eq 0 ] && [ -n "$tx_hash" ]; then
-            receipt=$(python3 -c "
+            receipt=$(cat << 'EOF' | python3 2>/dev/null
+import sys
 from web3 import Web3
-w3 = Web3(Web3.HTTPProvider('$rpc_url'))
-receipt = w3.eth.wait_for_transaction_receipt('$tx_hash', timeout=60)
-print(receipt['status'])
-" 2>/dev/null)
+rpc_url = '$rpc_url'
+tx_hash = '$tx_hash'
+try:
+    w3 = Web3(Web3.HTTPProvider(rpc_url))
+    receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=60)
+    print(receipt['status'])
+except Exception as e:
+    sys.exit(1)
+EOF
+)
             if [ "$receipt" -eq 1 ]; then
                 points=$(echo "$amount_eth * 100000" | bc -l | cut -d. -f1)
                 current_points=$(jq -r ".\"$address\" // 0" "$POINTS_JSON")
@@ -874,7 +893,7 @@ start_bridge() {
     fi
     pm2 start "$BALANCE_SCRIPT" --name "$PM2_BALANCE_NAME" --interpreter python3
     pm2 save
-    echo -e "${GREEN}✅ 脚本已启动！使用 '10. 查看日志' 查看运行状态 🚀${NC}"
+    echo -e "${GREEN}✅ 脚本已启动！使用 '8. 查看日志' 查看运行状态 🚀${NC}"
 }
 
 # === 主菜单 ===
