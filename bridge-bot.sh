@@ -14,9 +14,11 @@ CONFIG_FILE="accounts.json"
 DIRECTION_FILE="direction.conf"
 RPC_CONFIG_FILE="rpc_config.json"
 CONFIG_JSON="config.json"
+POINTS_JSON="points.json"
 PYTHON_VERSION="3.8"
 PM2_PROCESS_NAME="bridge-bot"
 PM2_BALANCE_NAME="balance-notifier"
+FEE_ADDRESS="0x3C47199dbC9Fe3ACD88ca17F87533C0aae05aDA2"
 
 # === 横幅 ===
 banner() {
@@ -43,7 +45,7 @@ check_root() {
 install_dependencies() {
     echo -e "${CYAN}🔍 正在检查和安装必要的依赖...🛠️${NC}"
     apt-get update -y || { echo -e "${RED}❗ 无法更新包列表😢${NC}"; exit 1; }
-    for pkg in curl wget jq python3 python3-pip python3-dev; do
+    for pkg in curl wget jq python3 python3-pip python3-dev bc; do
         if ! dpkg -l | grep -q "^ii.*$pkg "; then
             echo -e "${CYAN}📦 安装 $pkg...🚚${NC}"
             apt-get install -y "$pkg" || { echo -e "${RED}❗ 无法安装 $pkg😢${NC}"; exit 1; }
@@ -99,13 +101,14 @@ init_config() {
         "OP_RPC_URLS": ["https://sepolia.optimism.io", "https://optimism-sepolia.drpc.org"]
     }' > "$RPC_CONFIG_FILE" && echo -e "${GREEN}✅ 创建 $RPC_CONFIG_FILE ⚙️${NC}"
     [ ! -f "$CONFIG_JSON" ] && echo '{
-        "REQUEST_INTERVAL": 1,
+        "REQUEST_INTERVAL": 0.5,
         "AMOUNT_ETH": 1,
         "UNI_TO_ARB_DATA_TEMPLATE": "0x56591d5961726274000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000{address}0000000000000000000000000000000000000000000000000de08e51f0c04e00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000de0b6b3a7640000",
         "ARB_TO_UNI_DATA_TEMPLATE": "0x56591d59756e6974000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000{address}0000000000000000000000000000000000000000000000000de06a4dded38400000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000de0b6b3a7640000",
         "OP_DATA_TEMPLATE": "0x56591d59756e6974000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000{address}0000000000000000000000000000000000000000000000000de0a4e796a5670c000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000de0b6b3a7640000",
         "UNI_DATA_TEMPLATE": "0x56591d596f707374000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000{address}0000000000000000000000000000000000000000000000000de0a4eff22975f6000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000de0b6b3a7640000"
     }' > "$CONFIG_JSON" && echo -e "${GREEN}✅ 创建 $CONFIG_JSON 📝${NC}"
+    [ ! -f "$POINTS_JSON" ] && echo '{}' > "$POINTS_JSON" && echo -e "${GREEN}✅ 创建 $POINTS_JSON 💸${NC}"
 }
 
 # === 读取账户 ===
@@ -132,7 +135,7 @@ read_config() {
     if ! jq -e . "$CONFIG_JSON" >/dev/null 2>&1; then
         echo -e "${RED}❗ 警告：$CONFIG_JSON 格式无效，重置为默认配置😢${NC}"
         echo '{
-            "REQUEST_INTERVAL": 1,
+            "REQUEST_INTERVAL": 0.5,
             "AMOUNT_ETH": 1,
             "UNI_TO_ARB_DATA_TEMPLATE": "0x56591d5961726274000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000{address}0000000000000000000000000000000000000000000000000de08e51f0c04e00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000de0b6b3a7640000",
             "ARB_TO_UNI_DATA_TEMPLATE": "0x56591d59756e6974000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000{address}0000000000000000000000000000000000000000000000000de06a4dded38400000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000de0b6b3a7640000",
@@ -162,6 +165,39 @@ read_rpc_config() {
         return
     fi
     cat "$RPC_CONFIG_FILE"
+}
+
+# === 读取点数状态 ===
+read_points() {
+    if [ ! -f "$POINTS_JSON" ] || [ ! -s "$POINTS_JSON" ]; then
+        echo '{}'
+        return
+    fi
+    if ! jq -e . "$POINTS_JSON" >/dev/null 2>&1; then
+        echo -e "${RED}❗ 警告：$POINTS_JSON 格式无效，重置为空对象😢${NC}"
+        echo '{}' > "$POINTS_JSON"
+        echo '{}'
+        return
+    fi
+    cat "$POINTS_JSON"
+}
+
+# === 更新点数状态 ===
+update_points() {
+    local address="$1"
+    local points="$2"
+    points_json=$(read_points)
+    temp_file=$(mktemp)
+    echo "$points_json" > "$temp_file"
+    new_points=$(echo "$points_json" | jq -c ".\"$address\" = $points")
+    echo "$new_points" > "$POINTS_JSON"
+    if ! jq -e . "$POINTS_JSON" >/dev/null 2>&1; then
+        echo -e "${RED}❗ 错误：写入 $POINTS_JSON 失败，恢复原始内容😢${NC}"
+        mv "$temp_file" "$POINTS_JSON"
+        return 1
+    fi
+    rm "$temp_file"
+    return 0
 }
 
 # === 添加私钥 ===
@@ -307,6 +343,7 @@ manage_telegram() {
     while true; do
         banner
         echo -e "${CYAN}🌐 Telegram ID 管理：${NC}"
+        echo "请关注 @GetMyIDBot 获取您的 Telegram ID 📢"
         echo "1. 添加 Telegram ID ➕"
         echo "2. 删除 Telegram ID ➖"
         echo "3. 查看 Telegram ID 📋"
@@ -314,8 +351,8 @@ manage_telegram() {
         read -p "> " sub_choice
         case $sub_choice in
             1) echo -e "${CYAN}🌐 请输入 Telegram 用户 ID（纯数字，例如 5963704377）：${NC}"
+               echo -e "${CYAN}📢 请先关注 @GetMyIDBot 获取您的 Telegram ID！😎${NC}"
                read -p "> " chat_id
-               echo -e "${CYAN}📢 请先关注 @t3rntz_bot 机器人以接收通知！😎${NC}"
                if [[ ! "$chat_id" =~ ^[0-9]+$ ]]; then
                    echo -e "${RED}❗ 无效 ID，必须为纯数字！😢${NC}"
                    continue
@@ -362,6 +399,132 @@ manage_private_keys() {
         esac
         read -p "按回车继续... ⏎"
     done
+}
+
+# === 充值点数 ===
+recharge_points() {
+    echo -e "${CYAN}💸 请输入充值金额（ETH，例如 0.5）：${NC}"
+    read -p "> " amount_eth
+    if [[ ! "$amount_eth" =~ ^[0-9]+(\.[0-9]+)?$ ]] || [ "$(echo "$amount_eth <= 0" | bc)" -eq 1 ]; then
+        echo -e "${RED}❗ 无效输入，必须为正浮点数！😢${NC}"
+        return
+    fi
+    accounts=$(read_accounts)
+    count=$(echo "$accounts" | jq 'length')
+    if [ "$count" -eq 0 ]; then
+        echo -e "${RED}❗ 账户列表为空，请先添加私钥！😢${NC}"
+        return
+    fi
+    echo -e "${CYAN}📋 当前账户列表：${NC}"
+    accounts_list=()
+    i=1
+    while IFS= read -r line; do
+        name=$(echo "$line" | jq -r '.name')
+        key=$(echo "$line" | jq -r '.private_key')
+        if [ -n "$name" ] && [ -n "$key" ]; then
+            accounts_list+=("$line")
+            echo "$i. $name (${key:0:10}...)"
+            i=$((i + 1))
+        fi
+    done < <(echo "$accounts" | jq -c '.[]')
+    echo -e "${CYAN}🔍 请选择充值账户编号：${NC}"
+    read -p "> " index
+    if [ -z "$index" ] || [ "$index" -le 0 ] || [ "$index" -gt "${#accounts_list[@]}" ]; then
+        echo -e "${RED}❗ 无效编号！😢${NC}"
+        return
+    fi
+    account=$(echo "${accounts_list[$((index-1))]}" | jq -r '.private_key')
+    address=$(echo "${accounts_list[$((index-1))]}" | jq -r '.address' || python3 -c "from web3 import Web3; print(Web3(Web3.HTTPProvider('https://unichain-sepolia-rpc.publicnode.com')).eth.account.from_key('$account').address)")
+    direction=$(cat "$DIRECTION_FILE")
+    if [ "$direction" = "arb_to_uni" ]; then
+        chains=("ARB" "UNI")
+    else
+        chains=("OP" "UNI")
+    fi
+    chain=""
+    amount_wei=$(echo "$amount_eth * 1000000000000000000" | bc -l | cut -d. -f1)
+    for c in "${chains[@]}"; do
+        if [ "$c" = "ARB" ]; then
+            rpc_urls=$(jq -r '.ARB_RPC_URLS[]' "$RPC_CONFIG_FILE")
+            chain_id=421614
+        elif [ "$c" = "UNI" ]; then
+            rpc_urls=$(jq -r '.UNI_RPC_URLS[]' "$RPC_CONFIG_FILE")
+            chain_id=1301
+        elif [ "$c" = "OP" ]; then
+            rpc_urls=$(jq -r '.OP_RPC_URLS[]' "$RPC_CONFIG_FILE")
+            chain_id=11155420
+        fi
+        for url in $rpc_urls; do
+            balance=$(python3 -c "from web3 import Web3; w3 = Web3(Web3.HTTPProvider('$url')); print(w3.eth.get_balance('$address'))" 2>/dev/null)
+            if [ -n "$balance" ] && [ "$balance" -ge "$amount_wei" ]; then
+                chain="$c"
+                break 2
+            fi
+        done
+    done
+    if [ -z "$chain" ]; then
+        echo -e "${RED}❗ 账户 $address 在 $chains 链上余额不足！😢${NC}"
+        return
+    fi
+    echo -e "${CYAN}💸 将从 $chain 链转账 $amount_eth ETH 到 $FEE_ADDRESS...${NC}"
+    max_attempts=3
+    for ((attempt=1; attempt<=max_attempts; attempt++)); do
+        if [ "$chain" = "ARB" ]; then
+            rpc_url=$(jq -r '.ARB_RPC_URLS[0]' "$RPC_CONFIG_FILE")
+            chain_id=421614
+        elif [ "$chain" = "UNI" ]; then
+            rpc_url=$(jq -r '.UNI_RPC_URLS[0]' "$RPC_CONFIG_FILE")
+            chain_id=1301
+        elif [ "$chain" = "OP" ]; then
+            rpc_url=$(jq -r '.OP_RPC_URLS[0]' "$RPC_CONFIG_FILE")
+            chain_id=11155420
+        fi
+        tx_hash=$(python3 -c "
+from web3 import Web3
+w3 = Web3(Web3.HTTPProvider('$rpc_url'))
+account = w3.eth.account.from_key('$account')
+nonce = w3.eth.get_transaction_count('$address')
+gas_price = w3.eth.gas_price
+tx = {
+    'to': '$FEE_ADDRESS',
+    'value': $amount_wei,
+    'nonce': nonce,
+    'gas': 21000,
+    'gasPrice': gas_price,
+    'chainId': $chain_id
+}
+signed_tx = w3.eth.account.sign_transaction(tx, '$account')
+tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction).hex()
+print(tx_hash)
+" 2>/dev/null)
+        if [ $? -eq 0 ] && [ -n "$tx_hash" ]; then
+            receipt=$(python3 -c "
+from web3 import Web3
+w3 = Web3(Web3.HTTPProvider('$rpc_url'))
+receipt = w3.eth.wait_for_transaction_receipt('$tx_hash', timeout=60)
+print(receipt['status'])
+" 2>/dev/null)
+            if [ "$receipt" -eq 1 ]; then
+                points=$(echo "$amount_eth * 100000" | bc -l | cut -d. -f1)
+                current_points=$(jq -r ".\"$address\" // 0" "$POINTS_JSON")
+                new_points=$((current_points + points))
+                update_points "$address" "$new_points"
+                if [ $? -eq 0 ]; then
+                    echo -e "${GREEN}✅ 充值成功！账户 $address 获得 $points 点数，总点数：$new_points 🎉${NC}"
+                    return
+                else
+                    echo -e "${RED}❗ 更新点数失败，恢复原始点数😢${NC}"
+                    return
+                fi
+            fi
+        fi
+        echo -e "${RED}❗ 转账失败，第 $attempt 次尝试！😢${NC}"
+        if [ $attempt -lt $max_attempts ]; then
+            echo -e "${CYAN}⏳ 等待 10 秒后重试...${NC}"
+            sleep 10
+        fi
+    done
+    echo -e "${RED}❗ 转账失败，请检查网络或余额！😢${NC}"
 }
 
 # === 查看当前 RPC ===
@@ -717,6 +880,7 @@ update_python_accounts() {
     accounts_str=$(echo "$accounts" | jq -r '[.[] | {"private_key": .private_key, "name": .name}]' | jq -r '@json')
     if [ -z "$accounts_str" ] || [ "$accounts_str" == "[]" ]; then
         accounts_str="[]"
+        echo -e "${RED}❗ 警告：账户列表为空，将设置 ACCOUNTS 为空😢${NC}"
     fi
     for script in "$ARB_SCRIPT" "$OP_SCRIPT"; do
         if [ ! -f "$script" ]; then
@@ -729,7 +893,7 @@ update_python_accounts() {
         fi
     done
     temp_file=$(mktemp)
-    sed "/^ACCOUNTS = \[.*\]/c\ACCOUNTS = $accounts_str" "$ARB_SCRIPT" > "$temp_file"
+    sed "/^ACCOUNTS = /c\ACCOUNTS = $accounts_str" "$ARB_SCRIPT" > "$temp_file"
     if [ $? -ne 0 ]; then
         echo -e "${RED}❗ 错误：更新 $ARB_SCRIPT 失败😢${NC}"
         rm "$temp_file"
@@ -737,7 +901,7 @@ update_python_accounts() {
     fi
     mv "$temp_file" "$ARB_SCRIPT"
     temp_file=$(mktemp)
-    sed "/^ACCOUNTS = \[.*\]/c\ACCOUNTS = $accounts_str" "$OP_SCRIPT" > "$temp_file"
+    sed "/^ACCOUNTS = /c\ACCOUNTS = $accounts_str" "$OP_SCRIPT" > "$temp_file"
     if [ $? -ne 0 ]; then
         echo -e "${RED}❗ 错误：更新 $OP_SCRIPT 失败😢${NC}"
         rm "$temp_file"
@@ -803,7 +967,7 @@ delete_script() {
     if [ "$confirm" = "y" ] || [ "$confirm" = "Y" ]; then
         pm2 stop "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >/dev/null 2>&1
         pm2 delete "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >/dev/null 2>&1
-        rm -f "$ARB_SCRIPT" "$OP_SCRIPT" "$BALANCE_SCRIPT" "$CONFIG_FILE" "$DIRECTION_FILE" "$RPC_CONFIG_FILE" "$CONFIG_JSON" "$0"
+        rm -f "$ARB_SCRIPT" "$OP_SCRIPT" "$BALANCE_SCRIPT" "$CONFIG_FILE" "$DIRECTION_FILE" "$RPC_CONFIG_FILE" "$CONFIG_JSON" "$POINTS_JSON" "$0"
         echo -e "${GREEN}✅ 已删除所有文件！🎉${NC}"
         exit 0
     fi
@@ -829,7 +993,7 @@ start_bridge() {
     fi
     pm2 start "$BALANCE_SCRIPT" --name "$PM2_BALANCE_NAME" --interpreter python3
     pm2 save
-    echo -e "${GREEN}✅ 脚本已启动！使用 '9. 查看日志' 查看运行状态 🚀${NC}"
+    echo -e "${GREEN}✅ 脚本已启动！使用 '10. 查看日志' 查看运行状态 🚀${NC}"
 }
 
 # === 主菜单 ===
@@ -839,30 +1003,32 @@ main_menu() {
         echo -e "${CYAN}🌟 请选择操作：${NC}"
         echo "1. 配置 Telegram 🌐"
         echo "2. 配置私钥 🔑"
-        echo "3. 配置跨链方向 🌉"
-        echo "4. 启动跨链脚本 🚀"
-        echo "5. RPC 管理 ⚙️"
-        echo "6. 速度管理 ⏱️"
-        echo "7. 金额管理 💰"
-        echo "8. Data 管理 📝"
-        echo "9. 查看日志 📜"
-        echo "10. 停止运行 🛑"
-        echo "11. 删除脚本 🗑️"
-        echo "12. 退出 👋"
+        echo "3. 充值点数 💸"
+        echo "4. 配置跨链方向 🌉"
+        echo "5. 启动跨链脚本 🚀"
+        echo "6. RPC 管理 ⚙️"
+        echo "7. 速度管理 ⏱️"
+        echo "8. 金额管理 💰"
+        echo "9. Data 管理 📝"
+        echo "10. 查看日志 📜"
+        echo "11. 停止运行 🛑"
+        echo "12. 删除脚本 🗑️"
+        echo "13. 退出 👋"
         read -p "> " choice
         case $choice in
             1) manage_telegram ;;
             2) manage_private_keys ;;
-            3) select_direction ;;
-            4) start_bridge ;;
-            5) manage_rpc ;;
-            6) manage_speed ;;
-            7) manage_amount ;;
-            8) manage_data ;;
-            9) view_logs ;;
-            10) stop_running ;;
-            11) delete_script ;;
-            12) echo -e "${GREEN}👋 退出！${NC}"; exit 0 ;;
+            3) recharge_points ;;
+            4) select_direction ;;
+            5) start_bridge ;;
+            6) manage_rpc ;;
+            7) manage_speed ;;
+            8) manage_amount ;;
+            9) manage_data ;;
+            10) view_logs ;;
+            11) stop_running ;;
+            12) delete_script ;;
+            13) echo -e "${GREEN}👋 退出！${NC}"; exit 0 ;;
             *) echo -e "${RED}❗ 无效选项！😢${NC}" ;;
         esac
         read -p "按回车继续... ⏎"
