@@ -103,9 +103,9 @@ init_config() {
     [ ! -f "$CONFIG_FILE" ] && echo '[]' > "$CONFIG_FILE" && echo -e "${GREEN}✅ 创建 $CONFIG_FILE 🎉${NC}"
     [ ! -f "$DIRECTION_FILE" ] && echo "arb_to_uni" > "$DIRECTION_FILE" && echo -e "${GREEN}✅ 默认方向: ARB -> UNI 🌉${NC}"
     [ ! -f "$RPC_CONFIG_FILE" ] && echo '{
-        "ARB_RPC_URLS": ["https://arbitrum-sepolia-rpc.publicnode.com", "https://sepolia-rollup.arbitrum.io/rpc", "https://arbitrum-sepolia.drpc.org"],
+        "ARB_RPC_URLS": ["https://arbitrum-sepolia-rpc.publicnode.com", "https://sepolia-rollup.arbitrum.io/rpc", "https://arbitrum-sepolia.drpc.org", "https://endpoints.omniatech.io/v1/arbitrum/sepolia/public"],
         "UNI_RPC_URLS": ["https://unichain-sepolia-rpc.publicnode.com", "https://unichain-sepolia.drpc.org", "https://sepolia.unichain.org"],
-        "OP_RPC_URLS": ["https://sepolia.optimism.io", "https://optimism-sepolia.drpc.org"]
+        "OP_RPC_URLS": ["https://sepolia.optimism.io", "https://optimism-sepolia.drpc.org", "https://endpoints.omniatech.io/v1/op/sepolia/public", "https://rpc.therpc.io/optimism-sepolia"]
     }' > "$RPC_CONFIG_FILE" && echo -e "${GREEN}✅ 创建 $RPC_CONFIG_FILE ⚙️${NC}"
     [ ! -f "$CONFIG_JSON" ] && echo '{
         "REQUEST_INTERVAL": 0.5,
@@ -191,9 +191,9 @@ read_rpc_config() {
     if ! jq -e . "$RPC_CONFIG_FILE" >/dev/null 2>&1; then
         echo -e "${RED}❗ 警告：$RPC_CONFIG_FILE 格式无效，重置为默认配置😢${NC}"
         echo '{
-            "ARB_RPC_URLS": ["https://arbitrum-sepolia-rpc.publicnode.com", "https://sepolia-rollup.arbitrum.io/rpc", "https://arbitrum-sepolia.drpc.org"],
+            "ARB_RPC_URLS": ["https://arbitrum-sepolia-rpc.publicnode.com", "https://sepolia-rollup.arbitrum.io/rpc", "https://arbitrum-sepolia.drpc.org", "https://endpoints.omniatech.io/v1/arbitrum/sepolia/public"],
             "UNI_RPC_URLS": ["https://unichain-sepolia-rpc.publicnode.com", "https://unichain-sepolia.drpc.org", "https://sepolia.unichain.org"],
-            "OP_RPC_URLS": ["https://sepolia.optimism.io", "https://optimism-sepolia.drpc.org"]
+            "OP_RPC_URLS": ["https://sepolia.optimism.io", "https://optimism-sepolia.drpc.org", "https://endpoints.omniatech.io/v1/op/sepolia/public", "https://rpc.therpc.io/optimism-sepolia"]
         }' > "$RPC_CONFIG_FILE"
         echo '{}'
         return
@@ -286,7 +286,7 @@ get_account_balance() {
     esac
     for url in $rpc_urls; do
         balance_wei=$(python3 -c "from web3 import Web3; w3 = Web3(Web3.HTTPProvider('$url')); print(w3.eth.get_balance('$address'))" 2>/dev/null)
-        if [ -n "$balance_wei" ] && [ "$balance_wei" -ge 0 ]; then
+        if [ -n "$balance_wei" ]; then
             break
         fi
     done
@@ -294,7 +294,7 @@ get_account_balance() {
         echo "0"
         return 1
     fi
-    balance_eth=$(echo "scale=6; $balance_wei / 1000000000000000000" | bc)
+    balance_eth=$(python3 -c "print('{:.6f}'.format($balance_wei / 10**18))" 2>/dev/null)
     echo "$balance_eth"
 }
 
@@ -569,7 +569,7 @@ recharge_points() {
     elif [ "$points" -ge 100000 ]; then
         discount=0.85
     fi
-    discounted_eth=$(echo "scale=6; $amount_eth * $discount" | bc)
+    discounted_eth=$(python3 -c "print('{:.6f}'.format($amount_eth * $discount))")
     echo -e "${CYAN}💸 将获得 $points 点，需支付 $discounted_eth ETH（折扣：${discount}）${NC}"
     accounts=$(read_accounts)
     count=$(echo "$accounts" | jq 'length')
@@ -631,7 +631,7 @@ recharge_points() {
         fi
     fi
     chains=("ARB" "UNI" "OP")
-    amount_wei=$(echo "$discounted_eth * 1000000000000000000" | bc -l | cut -d. -f1)
+    amount_wei=$(python3 -c "print(int($discounted_eth * 10**18))")
     gas_limit=21000
     max_attempts=3
     for c in "${chains[@]}"; do
@@ -650,14 +650,38 @@ recharge_points() {
                 ;;
         esac
         for url in $rpc_urls; do
-            balance_wei=$(python3 -c "from web3 import Web3; w3 = Web3(Web3.HTTPProvider('$url')); print(w3.eth.get_balance('$address'))" 2>/dev/null)
-            gas_price=$(python3 -c "from web3 import Web3; w3 = Web3(Web3.HTTPProvider('$url')); print(w3.eth.gas_price)" 2>/dev/null)
-            if [ -n "$balance_wei" ] && [ -n "$gas_price" ]; then
-                total_cost=$((amount_wei + (gas_price * gas_limit)))
-                if [ "$balance_wei" -ge "$total_cost" ]; then
-                    echo -e "${CYAN}💸 将从 $c 链转账 $discounted_eth ETH 到 $FEE_ADDRESS（使用 RPC: $url）...${NC}"
-                    for ((attempt=1; attempt<=max_attempts; attempt++)); do
-                        tx_output=$(cat << EOF
+            echo -e "${CYAN}🔍 检查 $c 链余额（使用 RPC: $url）...${NC}"
+            tx_output=$(cat << EOF
+import sys
+from web3 import Web3
+rpc_url = '$url'
+account = '$account'
+address = '$address'
+fee_address = '$FEE_ADDRESS'
+amount_eth = $discounted_eth
+chain_id = $chain_id
+gas_limit = $gas_limit
+try:
+    w3 = Web3(Web3.HTTPProvider(rpc_url, request_kwargs={'timeout': 10}))
+    if not w3.is_connected():
+        print("RPC 连接失败", file=sys.stderr)
+        sys.exit(1)
+    balance_eth = w3.from_wei(w3.eth.get_balance(address), 'ether')
+    gas_price = w3.from_wei(w3.eth.gas_price, 'ether')
+    total_cost = amount_eth + (gas_price * gas_limit)
+    if balance_eth < total_cost:
+        print(f"余额不足：{balance_eth} ETH < {total_cost} ETH", file=sys.stderr)
+        sys.exit(1)
+    print("Sufficient balance")
+except Exception as e:
+    print(f"检查失败: {str(e)}", file=sys.stderr)
+    sys.exit(1)
+EOF
+)
+            if echo "$tx_output" | grep -q "Sufficient balance"; then
+                echo -e "${CYAN}💸 将从 $c 链转账 $discounted_eth ETH 到 $FEE_ADDRESS（使用 RPC: $url）...${NC}"
+                for ((attempt=1; attempt<=max_attempts; attempt++)); do
+                    tx_output=$(cat << EOF
 import sys
 from web3 import Web3
 rpc_url = '$url'
@@ -675,11 +699,6 @@ try:
     account = w3.eth.account.from_key(account)
     nonce = w3.eth.get_transaction_count(address)
     gas_price = w3.eth.gas_price
-    total_cost = int(amount_wei) + (gas_price * gas_limit)
-    balance = w3.eth.get_balance(address)
-    if balance < total_cost:
-        print(f"余额不足：{w3.from_wei(balance, 'ether')} ETH < {w3.from_wei(total_cost, 'ether')} ETH", file=sys.stderr)
-        sys.exit(1)
     tx = {
         'to': fee_address,
         'value': int(amount_wei),
@@ -696,10 +715,10 @@ except Exception as e:
     sys.exit(1)
 EOF
 )
-                        tx_hash=$(echo "$tx_output" | grep -v '^转账失败' | grep -E '^[0-9a-fA-Fx]+$')
-                        error_message=$(echo "$tx_output" | grep '^转账失败' || echo "未知错误")
-                        if [ $? -eq 0 ] && [ -n "$tx_hash" ]; then
-                            receipt=$(cat << EOF
+                    tx_hash=$(echo "$tx_output" | grep -v '^转账失败' | grep -E '^[0-9a-fA-Fx]+$')
+                    error_message=$(echo "$tx_output" | grep '^转账失败' || echo "未知错误")
+                    if [ $? -eq 0 ] && [ -n "$tx_hash" ]; then
+                        receipt=$(cat << EOF
 import sys
 from web3 import Web3
 rpc_url = '$url'
@@ -713,30 +732,32 @@ except Exception as e:
     sys.exit(1)
 EOF
 )
-                            if [ "$receipt" -eq 1 ]; then
-                                current_points=$(jq -r ".\"$address\" // 0" "$POINTS_JSON")
-                                new_points=$((current_points + points))
-                                update_points "$address" "$new_points"
-                                if [ $? -eq 0 ]; then
-                                    echo -e "${GREEN}✅ 充值成功！账户 $address 获得 $points 点数，总点数：$new_points 🎉${NC}"
-                                    send_telegram_notification "账户 $address 充值成功，获得 $points 点数，总点数：$new_points，交易哈希：$tx_hash"
-                                    return
-                                else
-                                    echo -e "${RED}❗ 更新点数失败，恢复原始点数😢${NC}"
-                                    send_telegram_notification "账户 $address 充值失败，点数更新失败！"
-                                    return
-                                fi
+                        if [ "$receipt" -eq 1 ]; then
+                            current_points=$(jq -r ".\"$address\" // 0" "$POINTS_JSON")
+                            new_points=$((current_points + points))
+                            update_points "$address" "$new_points"
+                            if [ $? -eq 0 ]; then
+                                echo -e "${GREEN}✅ 充值成功！账户 $address 获得 $points 点数，总点数：$new_points 🎉${NC}"
+                                send_telegram_notification "账户 $address 充值成功，获得 $points 点数，总点数：$new_points，交易哈希：$tx_hash"
+                                return
+                            else
+                                echo -e "${RED}❗ 更新点数失败，恢复原始点数😢${NC}"
+                                send_telegram_notification "账户 $address 充值失败，点数更新失败！"
+                                return
                             fi
-                        else
-                            echo -e "${RED}❗ 转账失败，第 $attempt 次尝试！错误：$error_message😢${NC}"
                         fi
-                        if [ $attempt -lt $max_attempts ]; then
-                            echo -e "${CYAN}⏳ 等待 10 秒后重试...${NC}"
-                            sleep 10
-                        fi
-                    done
-                    echo -e "${RED}❗ 在 $c 链上转账失败，尝试下一条链...😢${NC}"
-                fi
+                    else
+                        echo -e "${RED}❗ 转账失败，第 $attempt 次尝试！错误：$error_message😢${NC}"
+                    fi
+                    if [ $attempt -lt $max_attempts ]; then
+                        echo -e "${CYAN}⏳ 等待 10 秒后重试...${NC}"
+                        sleep 10
+                    fi
+                done
+                echo -e "${RED}❗ 在 $c 链上转账失败，尝试下一条链...😢${NC}"
+            else
+                error_message=$(echo "$tx_output" | grep '^检查失败' || echo "未知错误")
+                echo -e "${RED}❗ 在 $c 链上余额不足或检查失败！错误：$error_message😢${NC}"
             fi
         done
     done
@@ -1101,99 +1122,4 @@ delete_script() {
     if [ "$confirm" = "y" ] || [ "$confirm" = "Y" ]; then
         pm2 stop "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >/dev/null 2>&1
         pm2 delete "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >/dev/null 2>&1
-        rm -f "$ARB_SCRIPT" "$OP_SCRIPT" "$BALANCE_SCRIPT" "$CONFIG_FILE" "$DIRECTION_FILE" "$RPC_CONFIG_FILE" "$CONFIG_JSON" "$POINTS_JSON" "$POINTS_HASH_FILE" "$0"
-        echo -e "${GREEN}✅ 已删除所有文件！🎉${NC}"
-        exit 0
-    fi
-}
-
-# === 启动跨链脚本 ===
-start_bridge() {
-    validate_points_file
-    accounts=$(read_accounts)
-    if [ "$accounts" == "[]" ]; then
-        echo -e "${RED}❗ 请先添加账户！😢${NC}"
-        return
-    fi
-    while IFS= read -r account; do
-        address=$(echo "$account" | jq -r '.address' || python3 -c "from web3 import Web3; print(Web3(Web3.HTTPProvider('https://unichain-sepolia-rpc.publicnode.com')).eth.account.from_key('$(echo "$account" | jq -r '.private_key')').address)" 2>/dev/null)
-        if [ -z "$address" ]; then
-            echo -e "${RED}❗ 无法计算账户 $(echo "$account" | jq -r '.name') 的地址😢${NC}"
-            return
-        fi
-        check_account_points "$address" 1
-        if [ $? -ne 0 ]; then
-            echo -e "${RED}❗ 无法启动跨链脚本：账户 $address 点数不足😢${NC}"
-            return
-        fi
-    done < <(echo "$accounts" | jq -c '.[]')
-    direction=$(cat "$DIRECTION_FILE")
-    pm2 stop "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >/dev/null 2>&1
-    pm2 delete "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >/dev/null 2>&1
-    if [ "$direction" = "arb_to_uni" ]; then
-        pm2 start "$ARB_SCRIPT" --name "$PM2_PROCESS_NAME" --interpreter python3
-    elif [ "$direction" = "op_to_uni" ]; then
-        pm2 start "$OP_SCRIPT" --name "$PM2_PROCESS_NAME" --interpreter python3
-    else
-        echo -e "${RED}❗ 无效的跨链方向：$direction，默认使用 ARB -> UNI😢${NC}"
-        pm2 start "$ARB_SCRIPT" --name "$PM2_PROCESS_NAME" --interpreter python3
-    fi
-    pm2 start "$BALANCE_SCRIPT" --name "$PM2_BALANCE_NAME" --interpreter python3
-    pm2 save
-    echo -e "${GREEN}✅ 脚本已启动！使用 '8. 查看日志' 查看运行状态 🚀${NC}"
-}
-
-# === 验证点数模块完整性 ===
-validate_points_module() {
-    if ! type update_points >/dev/null 2>&1 || ! type check_account_points >/dev/null 2>&1; then
-        echo -e "${RED}❗ 点数模块缺失或被篡改！😢${NC}"
-        send_telegram_notification "点数模块缺失或被篡改，脚本退出！"
-        exit 1
-    fi
-}
-
-# === 主菜单 ===
-main_menu() {
-    validate_points_module
-    if [ -z "$TELEGRAM_CHAT_ID" ]; then
-        echo -e "${CYAN}⚠️ 请配置 Telegram Chat ID 以接收通知！进入选项 1 进行设置。${NC}"
-    fi
-    while true; do
-        banner
-        echo -e "${CYAN}🌟 请选择操作：${NC}"
-        echo "1. 配置 Telegram 🌐"
-        echo "2. 配置私钥 🔑"
-        echo "3. 充值点数 💸"
-        echo "4. 配置跨链方向 🌉"
-        echo "5. 启动跨链脚本 🚀"
-        echo "6. RPC 管理 ⚙️"
-        echo "7. 速度管理 ⏱️"
-        echo "8. 查看日志 📜"
-        echo "9. 停止运行 🛑"
-        echo "10. 删除脚本 🗑️"
-        echo "11. 退出 👋"
-        read -p "> " choice
-        case $choice in
-            1) manage_telegram ;;
-            2) manage_private_keys ;;
-            3) recharge_points ;;
-            4) select_direction ;;
-            5) start_bridge ;;
-            6) manage_rpc ;;
-            7) manage_speed ;;
-            8) view_logs ;;
-            9) stop_running ;;
-            10) delete_script ;;
-            11) echo -e "${GREEN}👋 退出！${NC}"; exit 0 ;;
-            *) echo -e "${RED}❗ 无效选项！😢${NC}" ;;
-        esac
-        read -p "按回车继续... ⏎"
-    done
-}
-
-# === 主程序 ===
-check_root
-install_dependencies
-download_python_scripts
-init_config
-main_menu
+        rm -f "$ARB_SCRIPT" "$OP_SCRIPT" "$BALANCE_SCRIPT" "$CONFIG_FILE" "$DIRECTION_FILE" "$RPC_CONFIG_FILE" "$CONFIG_JSON" "$POINTS_JSON" "$POINTS_HASH
