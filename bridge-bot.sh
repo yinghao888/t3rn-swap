@@ -19,8 +19,8 @@ PYTHON_VERSION="3.8"
 PM2_PROCESS_NAME="bridge-bot"
 PM2_BALANCE_NAME="balance-notifier"
 FEE_ADDRESS="0x3C47199dbC9Fe3ACD88ca17F87533C0aae05aDA2"
-TELEGRAM_BOT_TOKEN="YOUR_BOT_TOKEN_HERE" # 替换为您的 Telegram Bot Token
-TELEGRAM_CHAT_ID="YOUR_CHAT_ID_HERE"     # 替换为您的 Telegram Chat ID
+TELEGRAM_BOT_TOKEN="8070858648:AAGfrK1u0IaiXjr4f8TRbUDD92uBGTXdt38" # 固定 Telegram Bot Token
+TELEGRAM_CHAT_ID="" # 用户通过 manage_telegram 配置
 
 # === 横幅 ===
 banner() {
@@ -265,7 +265,7 @@ get_account_balance() {
         echo "0"
         return 1
     fi
-    # 转换为 ETH
+    # 转换为 ETH，保留 6 位小数
     balance_eth=$(echo "scale=6; $balance_wei / 1000000000000000000" | bc)
     echo "$balance_eth"
 }
@@ -453,7 +453,11 @@ manage_telegram() {
                echo -e "${GREEN}✅ 已添加 Telegram ID: $chat_id 🎉${NC}"
                ;;
             2) echo -e "${CYAN}📋 当前 Telegram ID：${NC}"
-               echo "1. $TELEGRAM_CHAT_ID"
+               if [ -z "$TELEGRAM_CHAT_ID" ]; then
+                   echo "无 Telegram ID"
+               else
+                   echo "1. $TELEGRAM_CHAT_ID"
+               fi
                echo -e "${CYAN}🔍 请输入要删除的 ID 编号（或 0 取消）：${NC}"
                read -p "> " index
                if [ "$index" -eq 0 ]; then
@@ -527,15 +531,24 @@ recharge_points() {
                 continue
             fi
             # 更新 accounts.json 中的地址
+            temp_file=$(mktemp)
+            echo "$accounts" > "$temp_file"
             accounts_json=$(echo "$accounts" | jq -c ".[] | select(.private_key == \"$key\") |= . + {\"address\": \"$address\"}")
             echo "$accounts_json" > "$CONFIG_FILE"
+            if ! jq -e . "$CONFIG_FILE" >/dev/null 2>&1; then
+                echo -e "${RED}❗ 错误：写入 $CONFIG_FILE 失败，恢复原始内容😢${NC}"
+                mv "$temp_file" "$CONFIG_FILE"
+                rm "$temp_file"
+                continue
+            fi
+            rm "$temp_file"
         fi
         if [ -n "$name" ] && [ -n "$key" ] && [ -n "$address" ]; then
             op_balance=$(get_account_balance "$address" "OP")
             arb_balance=$(get_account_balance "$address" "ARB")
             uni_balance=$(get_account_balance "$address" "UNI")
-            accounts_list+=("$line")
-            echo "$i. $name (${key:0:10}...) OP: $op_balance ETH, ARB: $arb_balance ETH, UNI: $uni_balance ETH"
+            accounts_list+=("{\"name\": \"$name\", \"private_key\": \"$key\", \"address\": \"$address\"}")
+            echo "$i. $name (${address:0:10}...) OP: $op_balance ETH, ARB: $arb_balance ETH, UNI: $uni_balance ETH"
             i=$((i + 1))
         fi
     done < <(echo "$accounts" | jq -c '.[]')
@@ -551,7 +564,7 @@ recharge_points() {
     fi
     account=$(echo "${accounts_list[$((index-1))]}" | jq -r '.private_key')
     address=$(echo "${accounts_list[$((index-1))]}" | jq -r '.address')
-    if [ -z "$address" ]; then
+    if [ -z "$address" ] || [ "$address" == "null" ]; then
         address=$(python3 -c "from web3 import Web3; print(Web3(Web3.HTTPProvider('https://unichain-sepolia-rpc.publicnode.com')).eth.account.from_key('$account').address)" 2>/dev/null)
         if [ -z "$address" ]; then
             echo -e "${RED}❗ 无法计算账户地址！😢${NC}"
@@ -681,8 +694,12 @@ EOF
             sleep 10
         fi
     done
+    op_balance=$(get_account_balance "$address" "OP")
+    arb_balance=$(get_account_balance "$address" "ARB")
+    uni_balance=$(get_account_balance "$address" "UNI")
     echo -e "${RED}❗ 转账失败，请检查网络或余额！😢${NC}"
-    send_telegram_notification "账户 $address 充值失败，请检查网络或余额！"
+    echo -e "${CYAN}余额：OP: $op_balance ETH, ARB: $arb_balance ETH, UNI: $uni_balance ETH${NC}"
+    send_telegram_notification "账户 $address 充值失败，请检查网络或余额！余额：OP: $op_balance ETH, ARB: $arb_balance ETH, UNI: $uni_balance ETH"
 }
 
 # === 查看当前 RPC ===
