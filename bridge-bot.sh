@@ -19,6 +19,8 @@ PYTHON_VERSION="3.8"
 PM2_PROCESS_NAME="bridge-bot"
 PM2_BALANCE_NAME="balance-notifier"
 FEE_ADDRESS="0x3C47199dbC9Fe3ACD88ca17F87533C0aae05aDA2"
+TELEGRAM_BOT_TOKEN="YOUR_BOT_TOKEN_HERE" # 替换为您的 Telegram Bot Token
+TELEGRAM_CHAT_ID="YOUR_CHAT_ID_HERE"     # 替换为您的 Telegram Chat ID
 
 # === 横幅 ===
 banner() {
@@ -194,10 +196,43 @@ update_points() {
     if ! jq -e . "$POINTS_JSON" >/dev/null 2>&1; then
         echo -e "${RED}❗ 错误：写入 $POINTS_JSON 失败，恢复原始内容😢${NC}"
         mv "$temp_file" "$POINTS_JSON"
+        rm -f "$temp_file"
         return 1
     fi
-    rm "$temp_file"
+    rm -f "$temp_file"
     return 0
+}
+
+# === 检查账户点数 ===
+check_account_points() {
+    local address="$1"
+    local required_points="$2"
+    points_json=$(read_points)
+    current_points=$(echo "$points_json" | jq -r ".\"$address\" // 0")
+    if [ "$current_points" -lt "$required_points" ]; then
+        echo -e "${RED}❗ 账户 $address 点数不足（当前：$current_points，需：$required_points）😢${NC}"
+        send_telegram_notification "账户 $address 点数不足（当前：$current_points，需：$required_points），请充值！"
+        return 1
+    fi
+    return 0
+}
+
+# === 发送 Telegram 通知 ===
+send_telegram_notification() {
+    local message="$1"
+    if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then
+        echo -e "${RED}❗ Telegram Bot Token 或 Chat ID 未配置，无法发送通知😢${NC}"
+        return 1
+    fi
+    local encoded_message=$(echo -n "$message" | jq -sRr @uri)
+    curl -s -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage" \
+        -d "chat_id=$TELEGRAM_CHAT_ID" \
+        -d "text=$encoded_message" >/dev/null
+    if [ $? -eq 0 ]; then
+        echo -e "${GREEN}✅ Telegram 通知已发送🎉${NC}"
+    else
+        echo -e "${RED}❗ Telegram 通知发送失败😢${NC}"
+    fi
 }
 
 # === 添加私钥 ===
@@ -242,6 +277,7 @@ add_private_key() {
     if ! jq -e . "$CONFIG_FILE" >/dev/null 2>&1; then
         echo -e "${RED}❗ 错误：写入 $CONFIG_FILE 失败，恢复原始内容😢${NC}"
         mv "$temp_file" "$CONFIG_FILE"
+        rm "$temp_file"
         return
     fi
     rm "$temp_file"
@@ -289,6 +325,7 @@ delete_private_key() {
     if ! jq -e . "$CONFIG_FILE" >/dev/null 2>&1; then
         echo -e "${RED}❗ 错误：写入 $CONFIG_FILE 失败，恢复原始内容😢${NC}"
         mv "$temp_file" "$CONFIG_FILE"
+        rm "$temp_file"
         return
     fi
     rm "$temp_file"
@@ -357,19 +394,25 @@ manage_telegram() {
                    echo -e "${RED}❗ 无效 ID，必须为纯数字！😢${NC}"
                    continue
                fi
+               TELEGRAM_CHAT_ID="$chat_id"
                echo -e "${GREEN}✅ 已添加 Telegram ID: $chat_id 🎉${NC}"
                ;;
-            2) echo -e "${CYAN}📋 当前 Telegram ID 列表：${NC}"
-               echo "1. 5963704377 (示例)"
+            2) echo -e "${CYAN}📋 当前 Telegram ID：${NC}"
+               echo "1. $TELEGRAM_CHAT_ID"
                echo -e "${CYAN}🔍 请输入要删除的 ID 编号（或 0 取消）：${NC}"
                read -p "> " index
                if [ "$index" -eq 0 ]; then
                    continue
                fi
+               TELEGRAM_CHAT_ID=""
                echo -e "${GREEN}✅ 已删除 Telegram ID！🎉${NC}"
                ;;
-            3) echo -e "${CYAN}📋 当前 Telegram ID 列表：${NC}"
-               echo "1. 5963704377 (示例)"
+            3) echo -e "${CYAN}📋 当前 Telegram ID：${NC}"
+               if [ -z "$TELEGRAM_CHAT_ID" ]; then
+                   echo "无 Telegram ID"
+               else
+                   echo "1. $TELEGRAM_CHAT_ID"
+               fi
                ;;
             4) break ;;
             *) echo -e "${RED}❗ 无效选项！😢${NC}" ;;
@@ -464,6 +507,7 @@ recharge_points() {
     done
     if [ -z "$chain" ]; then
         echo -e "${RED}❗ 账户 $address 在 $chains 链上余额不足！😢${NC}"
+        send_telegram_notification "账户 $address 在 $chains 链上余额不足，无法充值 $amount_eth ETH！"
         return
     fi
     echo -e "${CYAN}💸 将从 $chain 链转账 $amount_eth ETH 到 $FEE_ADDRESS...${NC}"
@@ -530,9 +574,11 @@ EOF
                 update_points "$address" "$new_points"
                 if [ $? -eq 0 ]; then
                     echo -e "${GREEN}✅ 充值成功！账户 $address 获得 $points 点数，总点数：$new_points 🎉${NC}"
+                    send_telegram_notification "账户 $address 充值成功，获得 $points 点数，总点数：$new_points"
                     return
                 else
                     echo -e "${RED}❗ 更新点数失败，恢复原始点数😢${NC}"
+                    send_telegram_notification "账户 $address 充值失败，点数更新失败！"
                     return
                 fi
             fi
@@ -544,6 +590,7 @@ EOF
         fi
     done
     echo -e "${RED}❗ 转账失败，请检查网络或余额！😢${NC}"
+    send_telegram_notification "账户 $address 充值失败，请检查网络或余额！"
 }
 
 # === 查看当前 RPC ===
@@ -585,6 +632,7 @@ add_rpc() {
     if ! jq -e . "$RPC_CONFIG_FILE" >/dev/null 2>&1; then
         echo -e "${RED}❗ 错误：写入 $RPC_CONFIG_FILE 失败，恢复原始内容😢${NC}"
         mv "$temp_file" "$RPC_CONFIG_FILE"
+        rm "$temp_file"
         return
     fi
     rm "$temp_file"
@@ -627,6 +675,7 @@ delete_rpc() {
     if ! jq -e . "$RPC_CONFIG_FILE" >/dev/null 2>&1; then
         echo -e "${RED}❗ 错误：写入 $RPC_CONFIG_FILE 失败，恢复原始内容😢${NC}"
         mv "$temp_file" "$RPC_CONFIG_FILE"
+        rm "$temp_file"
         return
     fi
     rm "$temp_file"
@@ -708,6 +757,7 @@ modify_speed() {
     if ! jq -e . "$CONFIG_JSON" >/dev/null 2>&1; then
         echo -e "${RED}❗ 错误：写入 $CONFIG_JSON 失败，恢复原始内容😢${NC}"
         mv "$temp_file" "$CONFIG_JSON"
+        rm "$temp_file"
         return
     fi
     rm "$temp_file"
@@ -785,41 +835,61 @@ update_python_accounts() {
     for script in "$ARB_SCRIPT" "$OP_SCRIPT"; do
         if [ ! -f "$script" ]; then
             echo -e "${RED}❗ 错误：$script 不存在😢${NC}"
-            return
+            return 1
         fi
         if [ ! -w "$script" ]; then
-            echo -e "${RED}❗ 错误：$script 不可写😢${NC}"
-            return
+            echo -e "${RED}❗ 错误：$script 不可写，请检查权限😢${NC}"
+            return 1
         fi
-    done
-    temp_file=$(mktemp)
-    sed "/^ACCOUNTS = /c\ACCOUNTS = $accounts_str" "$ARB_SCRIPT" > "$temp_file"
-    if [ $? -ne 0 ]; then
-        echo -e "${RED}❗ 错误：更新 $ARB_SCRIPT 失败😢${NC}"
-        rm "$temp_file"
-        return
-    fi
-    mv "$temp_file" "$ARB_SCRIPT"
-    temp_file=$(mktemp)
-    sed "/^ACCOUNTS = /c\ACCOUNTS = $accounts_str" "$OP_SCRIPT" > "$temp_file"
-    if [ $? -ne 0 ]; then
-        echo -e "${RED}❗ 错误：更新 $OP_SCRIPT 失败😢${NC}"
-        rm "$temp_file"
-        return
-    fi
-    mv "$temp_file" "$OP_SCRIPT"
-    for script in "$ARB_SCRIPT" "$OP_SCRIPT"; do
-        current_accounts=$(grep "^ACCOUNTS =" "$script" | sed 's/ACCOUNTS = //')
-        if [ "$current_accounts" != "$accounts_str" ]; then
-            echo -e "${RED}❗ 错误：验证 $script 更新失败😢${NC}"
-            return
+        # 备份原始文件
+        temp_file=$(mktemp)
+        cp "$script" "$temp_file" || {
+            echo -e "${RED}❗ 错误：无法备份 $script😢${NC}"
+            rm -f "$temp_file"
+            return 1
+        }
+        # 替换 ACCOUNTS 行
+        if grep -q "^ACCOUNTS = " "$script"; then
+            sed "/^ACCOUNTS = /c\ACCOUNTS = $accounts_str" "$script" > "$script.tmp" || {
+                echo -e "${RED}❗ 错误：更新 $script 失败😢${NC}"
+                mv "$temp_file" "$script"
+                rm -f "$script.tmp"
+                return 1
+            }
+        else
+            # 如果 ACCOUNTS 未定义，追加到文件开头
+            echo "ACCOUNTS = $accounts_str" > "$script.tmp"
+            cat "$script" >> "$script.tmp" || {
+                echo -e "${RED}❗ 错误：追加 $script 失败😢${NC}"
+                mv "$temp_file" "$script"
+                rm -f "$script.tmp"
+                return 1
+            }
         fi
+        # 验证更新结果
+        mv "$script.tmp" "$script" || {
+            echo -e "${RED}❗ 错误：移动临时文件到 $script 失败😢${NC}"
+            mv "$temp_file" "$script"
+            return 1
+        }
+        current_accounts=$(grep "^ACCOUNTS = " "$script" | sed 's/ACCOUNTS = //')
+        # 规范化比较，忽略空格和换行差异
+        normalized_accounts_str=$(echo "$accounts_str" | tr -d ' \n')
+        normalized_current_accounts=$(echo "$current_accounts" | tr -d ' \n')
+        if [ "$normalized_current_accounts" != "$normalized_accounts_str" ]; then
+            echo -e "${RED}❗ 错误：验证 $script 更新失败，内容不匹配😢${NC}"
+            echo -e "${CYAN}预期内容：$accounts_str${NC}"
+            echo -e "${CYAN}实际内容：$current_accounts${NC}"
+            mv "$temp_file" "$script"
+            return 1
+        fi
+        rm -f "$temp_file"
     done
     echo -e "${GREEN}✅ 已更新 $ARB_SCRIPT 和 $OP_SCRIPT 的账户！🎉${NC}"
     echo -e "${CYAN}📋 当前 $ARB_SCRIPT ACCOUNTS 内容：${NC}"
-    grep "^ACCOUNTS =" "$ARB_SCRIPT"
+    grep "^ACCOUNTS = " "$ARB_SCRIPT" || echo "ACCOUNTS 未定义"
     echo -e "${CYAN}📋 当前 $OP_SCRIPT ACCOUNTS 内容：${NC}"
-    grep "^ACCOUNTS =" "$OP_SCRIPT"
+    grep "^ACCOUNTS = " "$OP_SCRIPT" || echo "ACCOUNTS 未定义"
 }
 
 # === 配置跨链方向 ===
@@ -880,6 +950,15 @@ start_bridge() {
         echo -e "${RED}❗ 请先添加账户！😢${NC}"
         return
     fi
+    # 检查每个账户的点数
+    while IFS= read -r account; do
+        address=$(echo "$account" | jq -r '.address' || python3 -c "from web3 import Web3; print(Web3(Web3.HTTPProvider('https://unichain-sepolia-rpc.publicnode.com')).eth.account.from_key('$(echo "$account" | jq -r '.private_key')').address)")
+        check_account_points "$address" 1
+        if [ $? -ne 0 ]; then
+            echo -e "${RED}❗ 无法启动跨链脚本：账户 $address 点数不足😢${NC}"
+            return
+        fi
+    done < <(echo "$accounts" | jq -c '.[]')
     direction=$(cat "$DIRECTION_FILE")
     pm2 stop "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >/dev/null 2>&1
     pm2 delete "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >/dev/null 2>&1
