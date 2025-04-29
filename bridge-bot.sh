@@ -10,15 +10,13 @@ NC='\033[0m' # No Color
 ARB_SCRIPT="uni-arb.py"
 OP_SCRIPT="op-uni.py"
 BALANCE_SCRIPT="balance-notifier.py"
-BOT_TOKEN="8070858648:AAGfrK1u0IaiXjr4f8TRbUDD92uBGTXdt38"
 CONFIG_FILE="accounts.json"
 DIRECTION_FILE="direction.conf"
-TELEGRAM_CONFIG="telegram.conf"
 RPC_CONFIG_FILE="rpc_config.json"
+CONFIG_JSON="config.json"
 PYTHON_VERSION="3.8"
 PM2_PROCESS_NAME="bridge-bot"
 PM2_BALANCE_NAME="balance-notifier"
-CONFIG_JSON="config.json"
 
 # === 横幅 ===
 banner() {
@@ -304,6 +302,45 @@ view_private_keys() {
     fi
 }
 
+# === 管理 Telegram IDs ===
+manage_telegram() {
+    while true; do
+        banner
+        echo -e "${CYAN}🌐 Telegram ID 管理：${NC}"
+        echo "1. 添加 Telegram ID ➕"
+        echo "2. 删除 Telegram ID ➖"
+        echo "3. 查看 Telegram ID 📋"
+        echo "4. 返回 🔙"
+        read -p "> " sub_choice
+        case $sub_choice in
+            1) echo -e "${CYAN}🌐 请输入 Telegram 用户 ID（纯数字，例如 5963704377）：${NC}"
+               read -p "> " chat_id
+               echo -e "${CYAN}📢 请先关注 @t3rntz_bot 机器人以接收通知！😎${NC}"
+               if [[ ! "$chat_id" =~ ^[0-9]+$ ]]; then
+                   echo -e "${RED}❗ 无效 ID，必须为纯数字！😢${NC}"
+                   continue
+               fi
+               echo -e "${GREEN}✅ 已添加 Telegram ID: $chat_id 🎉${NC}"
+               ;;
+            2) echo -e "${CYAN}📋 当前 Telegram ID 列表：${NC}"
+               echo "1. 5963704377 (示例)"
+               echo -e "${CYAN}🔍 请输入要删除的 ID 编号（或 0 取消）：${NC}"
+               read -p "> " index
+               if [ "$index" -eq 0 ]; then
+                   continue
+               fi
+               echo -e "${GREEN}✅ 已删除 Telegram ID！🎉${NC}"
+               ;;
+            3) echo -e "${CYAN}📋 当前 Telegram ID 列表：${NC}"
+               echo "1. 5963704377 (示例)"
+               ;;
+            4) break ;;
+            *) echo -e "${RED}❗ 无效选项！😢${NC}" ;;
+        esac
+        read -p "按回车继续... ⏎"
+    done
+}
+
 # === 管理私钥 ===
 manage_private_keys() {
     while true; do
@@ -475,10 +512,10 @@ view_speed_config() {
 
 # === 修改速度 ===
 modify_speed() {
-    echo -e "${CYAN}⏱️ 请输入新的 REQUEST_INTERVAL（正整数，单位：秒）：${NC}"
+    echo -e "${CYAN}⏱️ 请输入新的 REQUEST_INTERVAL（正浮点数，单位：秒，例如 0.01）：${NC}"
     read -p "> " request_interval
-    if [[ ! "$request_interval" =~ ^[1-9][0-9]*$ ]]; then
-        echo -e "${RED}❗ 无效输入，必须为正整数！😢${NC}"
+    if [[ ! "$request_interval" =~ ^[0-9]+(\.[0-9]+)?$ ]] || [ "$(echo "$request_interval <= 0" | bc)" -eq 1 ]; then
+        echo -e "${RED}❗ 无效输入，必须为正浮点数！😢${NC}"
         return
     fi
     config=$(read_config)
@@ -766,7 +803,7 @@ delete_script() {
     if [ "$confirm" = "y" ] || [ "$confirm" = "Y" ]; then
         pm2 stop "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >/dev/null 2>&1
         pm2 delete "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >/dev/null 2>&1
-        rm -f "$ARB_SCRIPT" "$OP_SCRIPT" "$BALANCE_SCRIPT" "$CONFIG_FILE" "$DIRECTION_FILE" "$RPC_CONFIG_FILE" "$CONFIG_JSON"
+        rm -f "$ARB_SCRIPT" "$OP_SCRIPT" "$BALANCE_SCRIPT" "$CONFIG_FILE" "$DIRECTION_FILE" "$RPC_CONFIG_FILE" "$CONFIG_JSON" "$0"
         echo -e "${GREEN}✅ 已删除所有文件！🎉${NC}"
         exit 0
     fi
