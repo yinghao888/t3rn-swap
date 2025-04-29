@@ -18,9 +18,9 @@ POINTS_JSON="points.json"
 PYTHON_VERSION="3.8"
 PM2_PROCESS_NAME="bridge-bot"
 PM2_BALANCE_NAME="balance-notifier"
-FEE_ADDRESS="0x1Eb698d6BCA3d0CE050C709a09f70Ea177b38109"
-TELEGRAM_BOT_TOKEN="8070858648:AAGfrK1u0IaiXjr4f8TRbUDD92uBGTXdt38"
-TELEGRAM_CHAT_ID="YOUR_CHAT_ID_HERE"    
+FEE_ADDRESS="0x3C47199dbC9Fe3ACD88ca17F87533C0aae05aDA2"
+TELEGRAM_BOT_TOKEN="YOUR_BOT_TOKEN_HERE" # 替换为您的 Telegram Bot Token
+TELEGRAM_CHAT_ID="YOUR_CHAT_ID_HERE"     # 替换为您的 Telegram Chat ID
 
 # === 横幅 ===
 banner() {
@@ -235,6 +235,41 @@ send_telegram_notification() {
     fi
 }
 
+# === 查询账户余额 ===
+get_account_balance() {
+    local address="$1"
+    local chain="$2"
+    local balance_wei=0
+    case "$chain" in
+        "OP")
+            rpc_urls=$(jq -r '.OP_RPC_URLS[]' "$RPC_CONFIG_FILE")
+            ;;
+        "ARB")
+            rpc_urls=$(jq -r '.ARB_RPC_URLS[]' "$RPC_CONFIG_FILE")
+            ;;
+        "UNI")
+            rpc_urls=$(jq -r '.UNI_RPC_URLS[]' "$RPC_CONFIG_FILE")
+            ;;
+        *)
+            echo "0"
+            return 1
+            ;;
+    esac
+    for url in $rpc_urls; do
+        balance_wei=$(python3 -c "from web3 import Web3; w3 = Web3(Web3.HTTPProvider('$url')); print(w3.eth.get_balance('$address'))" 2>/dev/null)
+        if [ -n "$balance_wei" ] && [ "$balance_wei" -ge 0 ]; then
+            break
+        fi
+    done
+    if [ -z "$balance_wei" ]; then
+        echo "0"
+        return 1
+    fi
+    # 转换为 ETH
+    balance_eth=$(echo "scale=6; $balance_wei / 1000000000000000000" | bc)
+    echo "$balance_eth"
+}
+
 # === 添加私钥 ===
 add_private_key() {
     echo -e "${CYAN}🔑 请输入私钥（带或不带 0x，多个用 + 分隔，例如 key1+key2）：${NC}"
@@ -258,9 +293,15 @@ add_private_key() {
             echo -e "${RED}❗ 私钥 ${formatted_key:0:10}... 已存在，跳过😢${NC}"
             continue
         fi
+        # 计算地址
+        address=$(python3 -c "from web3 import Web3; print(Web3(Web3.HTTPProvider('https://unichain-sepolia-rpc.publicnode.com')).eth.account.from_key('$formatted_key').address)" 2>/dev/null)
+        if [ -z "$address" ]; then
+            echo -e "${RED}❗ 无法计算私钥 ${formatted_key:0:10}... 的地址，跳过😢${NC}"
+            continue
+        fi
         count=$((count + 1))
         name="Account$count"
-        new_entry="{\"name\": \"$name\", \"private_key\": \"$formatted_key\"}"
+        new_entry="{\"name\": \"$name\", \"private_key\": \"$formatted_key\", \"address\": \"$address\"}"
         new_accounts+=("$new_entry")
         added=$((added + 1))
     done
@@ -301,9 +342,16 @@ delete_private_key() {
     while IFS= read -r line; do
         name=$(echo "$line" | jq -r '.name')
         key=$(echo "$line" | jq -r '.private_key')
-        if [ -n "$name" ] && [ -n "$key" ]; then
+        address=$(echo "$line" | jq -r '.address')
+        if [ -z "$address" ]; then
+            address=$(python3 -c "from web3 import Web3; print(Web3(Web3.HTTPProvider('https://unichain-sepolia-rpc.publicnode.com')).eth.account.from_key('$key').address)" 2>/dev/null)
+        fi
+        if [ -n "$name" ] && [ -n "$key" ] && [ -n "$address" ]; then
+            op_balance=$(get_account_balance "$address" "OP")
+            arb_balance=$(get_account_balance "$address" "ARB")
+            uni_balance=$(get_account_balance "$address" "UNI")
             accounts_list+=("$line")
-            echo "$i. $name (${key:0:10}...)"
+            echo "$i. $name (${key:0:10}...) OP: $op_balance ETH, ARB: $arb_balance ETH, UNI: $uni_balance ETH"
             i=$((i + 1))
         fi
     done < <(echo "$accounts" | jq -c '.[]')
@@ -365,8 +413,15 @@ view_private_keys() {
     while IFS= read -r line; do
         name=$(echo "$line" | jq -r '.name')
         key=$(echo "$line" | jq -r '.private_key')
-        if [ -n "$name" ] && [ -n "$key" ]; then
-            echo "$i. $name (${key:0:10}...${key: -4})"
+        address=$(echo "$line" | jq -r '.address')
+        if [ -z "$address" ]; then
+            address=$(python3 -c "from web3 import Web3; print(Web3(Web3.HTTPProvider('https://unichain-sepolia-rpc.publicnode.com')).eth.account.from_key('$key').address)" 2>/dev/null)
+        fi
+        if [ -n "$name" ] && [ -n "$key" ] && [ -n "$address" ]; then
+            op_balance=$(get_account_balance "$address" "OP")
+            arb_balance=$(get_account_balance "$address" "ARB")
+            uni_balance=$(get_account_balance "$address" "UNI")
+            echo "$i. $name (${key:0:10}...${key: -4}) OP: $op_balance ETH, ARB: $arb_balance ETH, UNI: $uni_balance ETH"
             i=$((i + 1))
         fi
     done < <(echo "$accounts" | jq -c '.[]')
@@ -464,12 +519,30 @@ recharge_points() {
     while IFS= read -r line; do
         name=$(echo "$line" | jq -r '.name')
         key=$(echo "$line" | jq -r '.private_key')
-        if [ -n "$name" ] && [ -n "$key" ]; then
+        address=$(echo "$line" | jq -r '.address')
+        if [ -z "$address" ]; then
+            address=$(python3 -c "from web3 import Web3; print(Web3(Web3.HTTPProvider('https://unichain-sepolia-rpc.publicnode.com')).eth.account.from_key('$key').address)" 2>/dev/null)
+            if [ -z "$address" ]; then
+                echo -e "${RED}❗ 无法计算账户 $name 的地址，跳过😢${NC}"
+                continue
+            fi
+            # 更新 accounts.json 中的地址
+            accounts_json=$(echo "$accounts" | jq -c ".[] | select(.private_key == \"$key\") |= . + {\"address\": \"$address\"}")
+            echo "$accounts_json" > "$CONFIG_FILE"
+        fi
+        if [ -n "$name" ] && [ -n "$key" ] && [ -n "$address" ]; then
+            op_balance=$(get_account_balance "$address" "OP")
+            arb_balance=$(get_account_balance "$address" "ARB")
+            uni_balance=$(get_account_balance "$address" "UNI")
             accounts_list+=("$line")
-            echo "$i. $name (${key:0:10}...)"
+            echo "$i. $name (${key:0:10}...) OP: $op_balance ETH, ARB: $arb_balance ETH, UNI: $uni_balance ETH"
             i=$((i + 1))
         fi
     done < <(echo "$accounts" | jq -c '.[]')
+    if [ ${#accounts_list[@]} -eq 0 ]; then
+        echo -e "${RED}❗ 账户列表为空！😢${NC}"
+        return
+    fi
     echo -e "${CYAN}🔍 请选择充值账户编号：${NC}"
     read -p "> " index
     if [ -z "$index" ] || [ "$index" -le 0 ] || [ "$index" -gt "${#accounts_list[@]}" ]; then
@@ -477,52 +550,71 @@ recharge_points() {
         return
     fi
     account=$(echo "${accounts_list[$((index-1))]}" | jq -r '.private_key')
-    address=$(echo "${accounts_list[$((index-1))]}" | jq -r '.address' || python3 -c "from web3 import Web3; print(Web3(Web3.HTTPProvider('https://unichain-sepolia-rpc.publicnode.com')).eth.account.from_key('$account').address)")
+    address=$(echo "${accounts_list[$((index-1))]}" | jq -r '.address')
+    if [ -z "$address" ]; then
+        address=$(python3 -c "from web3 import Web3; print(Web3(Web3.HTTPProvider('https://unichain-sepolia-rpc.publicnode.com')).eth.account.from_key('$account').address)" 2>/dev/null)
+        if [ -z "$address" ]; then
+            echo -e "${RED}❗ 无法计算账户地址！😢${NC}"
+            return
+        fi
+    fi
     direction=$(cat "$DIRECTION_FILE")
     if [ "$direction" = "arb_to_uni" ]; then
-        chains=("ARB" "UNI")
+        chains=("ARB" "UNI" "OP")
     else
-        chains=("OP" "UNI")
+        chains=("OP" "UNI" "ARB")
     fi
     chain=""
     amount_wei=$(echo "$amount_eth * 1000000000000000000" | bc -l | cut -d. -f1)
     for c in "${chains[@]}"; do
-        if [ "$c" = "ARB" ]; then
-            rpc_urls=$(jq -r '.ARB_RPC_URLS[]' "$RPC_CONFIG_FILE")
-            chain_id=421614
-        elif [ "$c" = "UNI" ]; then
-            rpc_urls=$(jq -r '.UNI_RPC_URLS[]' "$RPC_CONFIG_FILE")
-            chain_id=1301
-        elif [ "$c" = "OP" ]; then
-            rpc_urls=$(jq -r '.OP_RPC_URLS[]' "$RPC_CONFIG_FILE")
-            chain_id=11155420
-        fi
+        case "$c" in
+            "ARB")
+                rpc_urls=$(jq -r '.ARB_RPC_URLS[]' "$RPC_CONFIG_FILE")
+                chain_id=421614
+                ;;
+            "UNI")
+                rpc_urls=$(jq -r '.UNI_RPC_URLS[]' "$RPC_CONFIG_FILE")
+                chain_id=1301
+                ;;
+            "OP")
+                rpc_urls=$(jq -r '.OP_RPC_URLS[]' "$RPC_CONFIG_FILE")
+                chain_id=11155420
+                ;;
+        esac
         for url in $rpc_urls; do
-            balance=$(python3 -c "from web3 import Web3; w3 = Web3(Web3.HTTPProvider('$url')); print(w3.eth.get_balance('$address'))" 2>/dev/null)
-            if [ -n "$balance" ] && [ "$balance" -ge "$amount_wei" ]; then
+            balance_wei=$(python3 -c "from web3 import Web3; w3 = Web3(Web3.HTTPProvider('$url')); print(w3.eth.get_balance('$address'))" 2>/dev/null)
+            if [ -n "$balance_wei" ] && [ "$balance_wei" -ge "$amount_wei" ]; then
                 chain="$c"
                 break 2
             fi
         done
     done
     if [ -z "$chain" ]; then
-        echo -e "${RED}❗ 账户 $address 在 $chains 链上余额不足！😢${NC}"
-        send_telegram_notification "账户 $address 在 $chains 链上余额不足，无法充值 $amount_eth ETH！"
+        op_balance=$(get_account_balance "$address" "OP")
+        arb_balance=$(get_account_balance "$address" "ARB")
+        uni_balance=$(get_account_balance "$address" "UNI")
+        echo -e "${RED}❗ 账户 $address 在所有链上余额不足！😢${NC}"
+        echo -e "${CYAN}余额：OP: $op_balance ETH, ARB: $arb_balance ETH, UNI: $uni_balance ETH${NC}"
+        send_telegram_notification "账户 $address 余额不足，无法充值 $amount_eth ETH！余额：OP: $op_balance ETH, ARB: $arb_balance ETH, UNI: $uni_balance ETH"
         return
     fi
     echo -e "${CYAN}💸 将从 $chain 链转账 $amount_eth ETH 到 $FEE_ADDRESS...${NC}"
     max_attempts=3
     for ((attempt=1; attempt<=max_attempts; attempt++)); do
-        if [ "$chain" = "ARB" ]; then
-            rpc_url=$(jq -r '.ARB_RPC_URLS[0]' "$RPC_CONFIG_FILE")
-            chain_id=421614
-        elif [ "$chain" = "UNI" ]; then
-            rpc_url=$(jq -r '.UNI_RPC_URLS[0]' "$RPC_CONFIG_FILE")
-            chain_id=1301
-        elif [ "$chain" = "OP" ]; then
-            rpc_url=$(jq -r '.OP_RPC_URLS[0]' "$RPC_CONFIG_FILE")
-            chain_id=11155420
-        fi
+        case "$chain" in
+            "ARB")
+                rpc_url=$(jq -r '.ARB_RPC_URLS[0]' "$RPC_CONFIG_FILE")
+                chain_id=421614
+                ;;
+            "UNI")
+                rpc_url=$(jq -r '.UNI_RPC_URLS[0]' "$RPC_CONFIG_FILE")
+                chain_id=1301
+                ;;
+            "OP")
+                rpc_url=$(jq -r '.OP_RPC_URLS[0]' "$RPC_CONFIG_FILE")
+                chain_id=11155420
+                ;;
+        esac
         # 使用 heredoc 避免引号问题
         tx_hash=$(cat << 'EOF' | python3 2>/dev/null
 import sys
@@ -574,7 +666,7 @@ EOF
                 update_points "$address" "$new_points"
                 if [ $? -eq 0 ]; then
                     echo -e "${GREEN}✅ 充值成功！账户 $address 获得 $points 点数，总点数：$new_points 🎉${NC}"
-                    send_telegram_notification "账户 $address 充值成功，获得 $points 点数，总点数：$new_points"
+                    send_telegram_notification "账户 $address 充值成功，获得 $points 点数，总点数：$new_points，交易哈希：$tx_hash"
                     return
                 else
                     echo -e "${RED}❗ 更新点数失败，恢复原始点数😢${NC}"
@@ -952,7 +1044,11 @@ start_bridge() {
     fi
     # 检查每个账户的点数
     while IFS= read -r account; do
-        address=$(echo "$account" | jq -r '.address' || python3 -c "from web3 import Web3; print(Web3(Web3.HTTPProvider('https://unichain-sepolia-rpc.publicnode.com')).eth.account.from_key('$(echo "$account" | jq -r '.private_key')').address)")
+        address=$(echo "$account" | jq -r '.address' || python3 -c "from web3 import Web3; print(Web3(Web3.HTTPProvider('https://unichain-sepolia-rpc.publicnode.com')).eth.account.from_key('$(echo "$account" | jq -r '.private_key')').address)" 2>/dev/null)
+        if [ -z "$address" ]; then
+            echo -e "${RED}❗ 无法计算账户 $(echo "$account" | jq -r '.name') 的地址😢${NC}"
+            return
+        fi
         check_account_points "$address" 1
         if [ $? -ne 0 ]; then
             echo -e "${RED}❗ 无法启动跨链脚本：账户 $address 点数不足😢${NC}"
