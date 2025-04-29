@@ -1,9 +1,14 @@
 import asyncio
 import time
 from web3 import Web3
-from telegram import Bot
 import json
 import os
+
+try:
+    from telegram import Bot
+except ImportError:
+    print("错误：未安装 python-telegram-bot 库，请运行 'pip3 install python-telegram-bot==13.7'")
+    exit(1)
 
 # 配置
 TELEGRAM_TOKEN = "8070858648:AAGfrK1u0IaiXjr4f8TRbUDD92uBGTXdt38"
@@ -60,7 +65,8 @@ def get_accounts():
 print("尝试连接到 Caldera 区块链...")
 caldera_w3 = Web3(Web3.HTTPProvider(CALDERA_RPC_URL))
 if not caldera_w3.is_connected():
-    raise Exception("无法连接到 Caldera 区块链 RPC")
+    print("错误：无法连接到 Caldera 区块链 RPC")
+    exit(1)
 print("Caldera 区块链连接成功")
 
 # 查询 Caldera 网络总余额
@@ -120,7 +126,11 @@ async def send_balance_update(bot, previous_caldera_balance, interval_count, sta
 # 主循环
 async def main():
     print("启动 Telegram Bot...")
-    bot = Bot(TELEGRAM_TOKEN)
+    try:
+        bot = Bot(TELEGRAM_TOKEN)
+    except Exception as e:
+        print(f"错误：无法初始化 Telegram Bot ({str(e)})")
+        exit(1)
     chat_ids = get_chat_ids()
     accounts = get_accounts()
     
@@ -136,4 +146,9 @@ async def main():
         await asyncio.sleep(60)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("程序终止")
+    except Exception as e:
+        print(f"程序出错: {str(e)}")
