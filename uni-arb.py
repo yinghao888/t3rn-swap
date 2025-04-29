@@ -29,26 +29,28 @@ with open("rpc_config.json", "r") as f:
 ARB_RPC_URLS = rpc_config["ARB_RPC_URLS"]
 UNI_RPC_URLS = rpc_config["UNI_RPC_URLS"]
 
+# 从 accounts.json 加载账户配置
+def load_accounts():
+    accounts_file = "accounts.json"
+    if not os.path.exists(accounts_file):
+        logger.error("未找到 accounts.json，请在 bridge-bot.sh 中添加私钥")
+        return []
+    try:
+        with open(accounts_file, "r") as f:
+            accounts_data = json.load(f)
+        if not isinstance(accounts_data, list):
+            logger.error("accounts.json 格式无效，应为列表")
+            return []
+        return accounts_data
+    except json.JSONDecodeError as e:
+        logger.error(f"解析 accounts.json 失败: {e}")
+        return []
+
 # 合约地址
 UNI_TO_ARB_CONTRACT = "0x1cEAb5967E5f078Fa0FEC3DFfD0394Af1fEeBCC9"
 ARB_TO_UNI_CONTRACT = "0x22B65d0B9b59af4D3Ed59F18b9Ad53f5F4908B54"
 
 # 检测并过滤 RPC 的函数
-def test_rpc_connectivity(rpc_urls: List[str], max_attempts: int = 5) -> List[str]:
-    available_rpcs = []
-    for url in rpc_urls:
-        logger.info(f"开始检测 RPC: {url}")
-        for attempt in range(max_attempts):
-            try:
-                w3 = Web3(Web3.HTTPProvider(url, request_kwargs={'timeout': 10}))
-                if w3.is_connected():
-                    logger.info(f"RPC {url} 连接成功")
-                    available_rpcs.append(url)
-                    break
-                else:
-                    logger.warning(f"RPC {url} 第 {attempt + 1} 次尝试失败")
-            except Exception as e:
-                logger.warning(f"RPC {url} 第 {attempt # === 检测并过滤 RPC 的函数 ===
 def test_rpc_connectivity(rpc_urls: List[str], max_attempts: int = 5) -> List[str]:
     available_rpcs = []
     for url in rpc_urls:
@@ -103,6 +105,7 @@ ARB_RPC_URLS = test_rpc_connectivity(ARB_RPC_URLS)
 
 # === 账户初始化 ===
 accounts: List[Dict] = []
+ACCOUNTS = load_accounts()  # 加载 accounts.json
 if not ACCOUNTS:
     logger.error("账户列表为空，请在 bridge-bot.sh 中添加私钥")
 else:
@@ -236,7 +239,7 @@ def main():
         logger.error("没有可用的账户，退出程序")
         return
     logger.info(f"开始为 {len(accounts)} 个账户执行 UNI-ARB 无限循环跨链，每次 {AMOUNT_ETH} ETH")
-    with ThreadPoolExecutor(max_workers=min(len(accounts), 30)) as executor:
+    with ThreadPoolExecutor(max_workers=min(len(accounts), 50)) as executor:
         executor.map(process_account, accounts)
 
 if __name__ == "__main__":
