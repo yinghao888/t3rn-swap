@@ -115,15 +115,27 @@ init_config() {
         "OP_DATA_TEMPLATE": "0x56591d59756e6974000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000{address}0000000000000000000000000000000000000000000000000de0a4e796a5670c000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000de0b6b3a7640000",
         "UNI_DATA_TEMPLATE": "0x56591d596f707374000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000{address}0000000000000000000000000000000000000000000000000de0a4eff22975f6000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000de0b6b3a7640000"
     }' > "$CONFIG_JSON" && echo -e "${GREEN}✅ 创建 $CONFIG_JSON 📝${NC}"
-    [ ! -f "$POINTS_JSON" ] && echo '{}' > "$POINTS_JSON" && echo -e "${GREEN}✅ 创建 $POINTS_JSON 💸${NC}" && sha256sum "$POINTS_JSON" > "$POINTS_HASH_FILE"
+    # 初始化 points.json 和 points.hash
+    if [ ! -f "$POINTS_JSON" ]; then
+        echo '{}' > "$POINTS_JSON" && echo -e "${GREEN}✅ 创建 $POINTS_JSON 💸${NC}"
+        sha256sum "$POINTS_JSON" > "$POINTS_HASH_FILE" 2>/dev/null || {
+            echo -e "${RED}❗ 无法创建 $POINTS_HASH_FILE，请检查写入权限😢${NC}"
+            exit 1
+        }
+        echo -e "${GREEN}✅ 创建 $POINTS_HASH_FILE 🎉${NC}"
+    fi
 }
 
 # === 验证点数文件完整性 ===
 validate_points_file() {
     if [ ! -f "$POINTS_JSON" ] || [ ! -f "$POINTS_HASH_FILE" ]; then
-        echo -e "${RED}❗ 点数文件或哈希文件缺失！😢${NC}"
-        send_telegram_notification "点数文件或哈希文件缺失，脚本退出！"
-        exit 1
+        echo -e "${RED}❗ 点数文件或哈希文件缺失！尝试重新创建...😢${NC}"
+        echo '{}' > "$POINTS_JSON"
+        sha256sum "$POINTS_JSON" > "$POINTS_HASH_FILE" 2>/dev/null || {
+            echo -e "${RED}❗ 无法创建 $POINTS_HASH_FILE，请检查写入权限😢${NC}"
+            exit 1
+        }
+        echo -e "${GREEN}✅ 点数文件已重新创建🎉${NC}"
     fi
     current_hash=$(sha256sum "$POINTS_JSON" | awk '{print $1}')
     stored_hash=$(awk '{print $1}' "$POINTS_HASH_FILE")
@@ -136,7 +148,6 @@ validate_points_file() {
 
 # === 读取账户 ===
 read_accounts() {
-    validate_points_file
     if [ ! -f "$CONFIG_FILE" ] || [ ! -s "$CONFIG_FILE" ]; then
         echo '[]'
         return
@@ -152,7 +163,6 @@ read_accounts() {
 
 # === 读取配置（REQUEST_INTERVAL, AMOUNT_ETH, DATA_TEMPLATE） ===
 read_config() {
-    validate_points_file
     if [ ! -f "$CONFIG_JSON" ] || [ ! -s "$CONFIG_JSON" ]; then
         echo '{}'
         return
@@ -175,7 +185,6 @@ read_config() {
 
 # === 读取 RPC 配置 ===
 read_rpc_config() {
-    validate_points_file
     if [ ! -f "$RPC_CONFIG_FILE" ] || [ ! -s "$RPC_CONFIG_FILE" ]; then
         echo '{}'
         return
@@ -214,7 +223,12 @@ update_points() {
         rm -f "$temp_file"
         return 1
     fi
-    sha256sum "$POINTS_JSON" > "$POINTS_HASH_FILE"
+    sha256sum "$POINTS_JSON" > "$POINTS_HASH_FILE" 2>/dev/null || {
+        echo -e "${RED}❗ 无法更新 $POINTS_HASH_FILE，请检查写入权限😢${NC}"
+        mv "$temp_file" "$POINTS_JSON"
+        rm -f "$temp_file"
+        return 1
+    }
     rm -f "$temp_file"
     return 0
 }
@@ -236,8 +250,8 @@ check_account_points() {
 # === 发送 Telegram 通知 ===
 send_telegram_notification() {
     local message="$1"
-    if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then
-        echo -e "${RED}❗ Telegram Bot Token 或 Chat ID 未配置，无法发送通知😢${NC}"
+    if [ -z "$TELEGRAM_CHAT_ID" ]; then
+        echo -e "${RED}❗ Telegram Chat ID 未配置，请在菜单中设置！😢${NC}"
         return 1
     fi
     local encoded_message=$(echo -n "$message" | jq -sRr @uri)
@@ -1126,55 +1140,44 @@ delete_script() {
     fi
 }
 
+# === 启动跨链脚本 ===
+start_bridge() {
+    validate_points_file
+    accounts=$(read_accounts)
+    if [ "$accounts" == "[]" ]; then
+        echo -e "${RED}❗ 请先添加账户！😢${NC}"
+        return
+    fi
+    # 检查每个账户的点数
+    while IFS= read -r account; do
+        address=$(echo "$account" | jq -r '.address' || python3 -c "from web3 import Web3; print(Web3(Web3.HTTPProvider('https://unichain-sepolia-rpc.publicnode.com')).eth.account.from_key('$(echo "$account" | jq -r '.private_key')').address)" 2>/dev/null)
+        if [ -z "$address" ]; then
+            echo -e "${RED}❗ 无法计算账户 $(echo "$account" | jq -r '.name') 的地址😢${NC}"
+            return
+        fi
+        check_account_points "$address" 1
+        if [ $? -ne 0 ]; then
+            echo -e "${RED}❗ 无法启动跨链脚本：账户 $address 点数不足😢${NC}"
+            return
+        fi
+    done < <(echo "$accounts" | jq -c '.[]')
+    direction=$(cat "$DIRECTION_FILE")
+    pm2 stop "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >/dev/null 2>&1
+    pm2 delete "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >/dev/null 2>&1
+    if [ "$direction" = "arb_to_uni" ]; then
+        pm2 start "$ARB_SCRIPT" --name "$PM2_PROCESS_NAME" --interpreter python3
+    elif [ "$direction" = "op_to_uni" ]; then
+        pm2 start "$OP_SCRIPT" --name "$PM2_PROCESS_NAME" --interpreter python3
+    else
+        echo -e "${RED}❗ 无效的跨链方向：$direction，默认使用 ARB -> UNI😢${NC}"
+        pm2 start "$ARB_SCRIPT" --name "$PM2_PROCESS_NAME" --interpreter python3
+    fi
+    pm2 start "$BALANCE_SCRIPT" --name "$PM2_BALANCE_NAME" --interpreter python3
+    pm2 save
+    echo -e "${GREEN}✅ 脚本已启动！使用 '8. 查看日志' 查看运行状态 🚀${NC}"
+}
+
 # === 验证点数模块完整性 ===
 validate_points_module() {
     if ! type update_points >/dev/null 2>&1 || ! type check_account_points >/dev/null 2>&1; then
-        echo -e "${RED}❗ 点数模块缺失或被篡改！😢${NC}"
-        send_telegram_notification "点数模块缺失或被篡改，脚本退出！"
-        exit 1
-    fi
-}
-
-# === 主菜单 ===
-main_menu() {
-    validate_points_module
-    validate_points_file
-    while true; do
-        banner
-        echo -e "${CYAN}🌟 请选择操作：${NC}"
-        echo "1. 配置 Telegram 🌐"
-        echo "2. 配置私钥 🔑"
-        echo "3. 充值点数 💸"
-        echo "4. 配置跨链方向 🌉"
-        echo "5. 启动跨链脚本 🚀"
-        echo "6. RPC 管理 ⚙️"
-        echo "7. 速度管理 ⏱️"
-        echo "8. 查看日志 📜"
-        echo "9. 停止运行 🛑"
-        echo "10. 删除脚本 🗑️"
-        echo "11. 退出 👋"
-        read -p "> " choice
-        case $choice in
-            1) manage_telegram ;;
-            2) manage_private_keys ;;
-            3) recharge_points ;;
-            4) select_direction ;;
-            5) start_bridge ;;
-            6) manage_rpc ;;
-            7) manage_speed ;;
-            8) view_logs ;;
-            9) stop_running ;;
-            10) delete_script ;;
-            11) echo -e "${GREEN}👋 退出！${NC}"; exit 0 ;;
-            *) echo -e "${RED}❗ 无效选项！😢${NC}" ;;
-        esac
-        read -p "按回车继续... ⏎"
-    done
-}
-
-# === 主程序 ===
-check_root
-install_dependencies
-download_python_scripts
-init_config
-main_menu
+        echo -e "${RED}❗ 点数模块缺失或被篡
