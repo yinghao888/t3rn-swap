@@ -1,3 +1,4 @@
+```bash
 #!/bin/bash
 
 # === 颜色定义 ===
@@ -68,7 +69,7 @@ install_dependencies() {
         curl -sL https://deb.nodesource.com/setup_16.x | bash -
         apt-get install -y nodejs && npm install -g pm2 || { echo -e "${RED}❗ 无法安装 PM2😢${NC}"; exit 1; }
     fi
-    for py_pkg in web3 python-telegram-bot; do
+    for py_pkg in web3 python-telegram-bot cryptography; do
         if ! python3 -m pip show "$py_pkg" >/dev/null 2>&1; then
             echo -e "${CYAN}📦 安装 $py_pkg...🚚${NC}"
             if [ "$py_pkg" = "python-telegram-bot" ]; then
@@ -441,7 +442,11 @@ recharge_points() {
         return
     fi
     account=$(echo "${accounts_list[$((index-1))]}" | jq -r '.private_key')
-    address=$(echo "${accounts_list[$((index-1))]}" | jq -r '.address' || python3 -c "from web3 import Web3; print(Web3(Web3.HTTPProvider('https://unichain-sepolia-rpc.publicnode.com')).eth.account.from_key('$account').address)")
+    address=$(python3 -c "from web3 import Web3; print(Web3(Web3.HTTPProvider('https://unichain-sepolia-rpc.publicnode.com')).eth.account.from_key('$account').address)")
+    if [ -z "$address" ]; then
+        echo -e "${RED}❗ 无法获取账户地址！😢${NC}"
+        return
+    fi
     amount_wei=$(echo "$amount_eth * 1000000000000000000" | bc -l | cut -d. -f1)
 
     # 查询三个链的余额
@@ -1023,7 +1028,7 @@ start_bridge() {
     fi
     pm2 start "$BALANCE_SCRIPT" --name "$PM2_BALANCE_NAME" --interpreter python3
     pm2 save
-    echo -e "${GREEN}✅ 脚本已启动！使用 '10. 查看日志' 查看运行状态 🚀${NC}"
+    echo -e "${GREEN}✅ 脚本已启动！使用 '8. 查看日志' 查看运行状态 🚀${NC}"
 }
 
 # === 主菜单 ===
@@ -1072,3 +1077,4 @@ install_dependencies
 download_python_scripts
 init_config
 main_menu
+```
