@@ -48,7 +48,7 @@ check_root() {
 install_dependencies() {
     echo -e "${CYAN}🔍 正在检查和安装必要的依赖...🛠️${NC}"
     apt-get update -y || { echo -e "${RED}❗ 无法更新包列表😢${NC}"; exit 1; }
-    for pkg in curl wget jq python3 python3-pip python3-dev bc sha256sum; do
+    for pkg in curl wget jq python3 python3-pip python3-dev bc coreutils; do
         if ! dpkg -l | grep -q "^ii.*$pkg "; then
             echo -e "${CYAN}📦 安装 $pkg...🚚${NC}"
             apt-get install -y "$pkg" || { echo -e "${RED}❗ 无法安装 $pkg😢${NC}"; exit 1; }
@@ -77,6 +77,10 @@ install_dependencies() {
             pip3 install "$py_pkg" || { echo -e "${RED}❗ 无法安装 $py_pkg😢${NC}"; exit 1; }
         fi
     done
+    if ! command -v sha256sum >/dev/null 2>&1; then
+        echo -e "${RED}❗ sha256sum 命令不可用，请确保 coreutils 已安装😢${NC}"
+        exit 1
+    fi
     echo -e "${GREEN}✅ 依赖安装完成！🎉${NC}"
 }
 
@@ -672,7 +676,7 @@ recharge_points() {
                 ;;
         esac
         # 使用 heredoc 传递转账逻辑，捕获详细错误
-        tx_hash=$(cat << 'EOF' | python3 2>/dev/null
+        tx_output=$(cat << 'EOF' | python3 2>&1
 import sys
 from web3 import Web3
 rpc_url = '$rpc_url'
@@ -683,7 +687,7 @@ amount_wei = $amount_wei
 chain_id = $chain_id
 gas_limit = $gas_limit
 try:
-    w3 = Web3(Web3.HTTPProvider(rpc_url))
+    w3 = Web3(Web3.HTTPProvider(rpc_url, request_kwargs={'timeout': 10}))
     if not w3.is_connected():
         print("RPC 连接失败", file=sys.stderr)
         sys.exit(1)
@@ -693,7 +697,7 @@ try:
     total_cost = int(amount_wei) + (gas_price * gas_limit)
     balance = w3.eth.get_balance(address)
     if balance < total_cost:
-        print(f"余额不足：{balance} < {total_cost}", file=sys.stderr)
+        print(f"余额不足：{w3.from_wei(balance, 'ether')} ETH < {w3.from_wei(total_cost, 'ether')} ETH", file=sys.stderr)
         sys.exit(1)
     tx = {
         'to': fee_address,
@@ -711,6 +715,8 @@ except Exception as e:
     sys.exit(1)
 EOF
 )
+        tx_hash=$(echo "$tx_output" | grep -v '^转账失败' | grep -E '^[0-9a-fA-Fx]+$')
+        error_message=$(echo "$tx_output" | grep '^转账失败' || echo "")
         if [ $? -eq 0 ] && [ -n "$tx_hash" ]; then
             receipt=$(cat << 'EOF' | python3 2>/dev/null
 import sys
@@ -718,7 +724,7 @@ from web3 import Web3
 rpc_url = '$rpc_url'
 tx_hash = '$tx_hash'
 try:
-    w3 = Web3(Web3.HTTPProvider(rpc_url))
+    w3 = Web3(Web3.HTTPProvider(rpc_url, request_kwargs={'timeout': 10}))
     receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=60)
     print(receipt['status'])
 except Exception as e:
@@ -741,45 +747,6 @@ EOF
                 fi
             fi
         else
-            error_message=$(cat << 'EOF' | python3 2>&1 >/dev/null
-import sys
-from web3 import Web3
-rpc_url = '$rpc_url'
-account = '$account'
-address = '$address'
-fee_address = '$FEE_ADDRESS'
-amount_wei = $amount_wei
-chain_id = $chain_id
-gas_limit = $gas_limit
-try:
-    w3 = Web3(Web3.HTTPProvider(rpc_url))
-    if not w3.is_connected():
-        print("RPC 连接失败", file=sys.stderr)
-        sys.exit(1)
-    account = w3.eth.account.from_key(account)
-    nonce = w3.eth.get_transaction_count(address)
-    gas_price = w3.eth.gas_price
-    total_cost = int(amount_wei) + (gas_price * gas_limit)
-    balance = w3.eth.get_balance(address)
-    if balance < total_cost:
-        print(f"余额不足：{balance} < {total_cost}", file=sys.stderr)
-        sys.exit(1)
-    tx = {
-        'to': fee_address,
-        'value': int(amount_wei),
-        'nonce': nonce,
-        'gas': gas_limit,
-        'gasPrice': gas_price,
-        'chainId': int(chain_id)
-    }
-    signed_tx = w3.eth.account.sign_transaction(tx, account.key)
-    tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction).hex()
-    print(tx_hash)
-except Exception as e:
-    print(f"转账失败: {str(e)}", file=sys.stderr)
-    sys.exit(1)
-EOF
-)
             echo -e "${RED}❗ 转账失败，第 $attempt 次尝试！错误：$error_message😢${NC}"
         fi
         if [ $attempt -lt $max_attempts ]; then
@@ -1157,43 +1124,6 @@ delete_script() {
         echo -e "${GREEN}✅ 已删除所有文件！🎉${NC}"
         exit 0
     fi
-}
-
-# === 启动跨链脚本 ===
-start_bridge() {
-    validate_points_file
-    accounts=$(read_accounts)
-    if [ "$accounts" == "[]" ]; then
-        echo -e "${RED}❗ 请先添加账户！😢${NC}"
-        return
-    fi
-    # 检查每个账户的点数
-    while IFS= read -r account; do
-        address=$(echo "$account" | jq -r '.address' || python3 -c "from web3 import Web3; print(Web3(Web3.HTTPProvider('https://unichain-sepolia-rpc.publicnode.com')).eth.account.from_key('$(echo "$account" | jq -r '.private_key')').address)" 2>/dev/null)
-        if [ -z "$address" ]; then
-            echo -e "${RED}❗ 无法计算账户 $(echo "$account" | jq -r '.name') 的地址😢${NC}"
-            return
-        fi
-        check_account_points "$address" 1
-        if [ $? -ne 0 ]; then
-            echo -e "${RED}❗ 无法启动跨链脚本：账户 $address 点数不足😢${NC}"
-            return
-        fi
-    done < <(echo "$accounts" | jq -c '.[]')
-    direction=$(cat "$DIRECTION_FILE")
-    pm2 stop "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >/dev/null 2>&1
-    pm2 delete "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >/dev/null 2>&1
-    if [ "$direction" = "arb_to_uni" ]; then
-        pm2 start "$ARB_SCRIPT" --name "$PM2_PROCESS_NAME" --interpreter python3
-    elif [ "$direction" = "op_to_uni" ]; then
-        pm2 start "$OP_SCRIPT" --name "$PM2_PROCESS_NAME" --interpreter python3
-    else
-        echo -e "${RED}❗ 无效的跨链方向：$direction，默认使用 ARB -> UNI😢${NC}"
-        pm2 start "$ARB_SCRIPT" --name "$PM2_PROCESS_NAME" --interpreter python3
-    fi
-    pm2 start "$BALANCE_SCRIPT" --name "$PM2_BALANCE_NAME" --interpreter python3
-    pm2 save
-    echo -e "${GREEN}✅ 脚本已启动！使用 '8. 查看日志' 查看运行状态 🚀${NC}"
 }
 
 # === 验证点数模块完整性 ===
