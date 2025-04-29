@@ -5,11 +5,15 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 import os
 import json
+import requests
 
 # === ANSI 颜色代码 ===
 LIGHT_BLUE = "\033[96m"
 LIGHT_RED = "\033[95m"
 RESET = "\033[0m"
+
+# === 账户配置（确保存在） ===
+ACCOUNTS = []
 
 # === 配置日志 ===
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
@@ -40,6 +44,10 @@ UNI_RPC_URLS = rpc_config["UNI_RPC_URLS"]
 # 合约地址
 OP_CONTRACT_ADDRESS = "0xb6Def636914Ae60173d9007E732684a9eEDEF26E"
 ARB_CONTRACT_ADDRESS = "0x1cEAb5967E5f078Fa0FEC3DFfD0394Af1fEeBCC9"
+
+# Telegram 配置
+TELEGRAM_BOT_TOKEN = "YOUR_BOT_TOKEN_HERE"  # 替换为您的 Telegram Bot Token
+TELEGRAM_CHAT_ID = "YOUR_CHAT_ID_HERE"     # 替换为您的 Telegram Chat ID
 
 # 检测并过滤 RPC 的函数
 def test_rpc_connectivity(rpc_urls: List[str], max_attempts: int = 5) -> List[str]:
@@ -94,6 +102,42 @@ OP_RPC_URLS = test_rpc_connectivity(OP_RPC_URLS)
 logger.info("开始检测 Unichain Sepolia RPC...")
 UNI_RPC_URLS = test_rpc_connectivity(UNI_RPC_URLS)
 
+# 检查和更新点数
+def check_and_deduct_points(address: str, required_points: int = 1) -> bool:
+    try:
+        with open("points.json", "r") as f:
+            points_data = json.load(f)
+        current_points = points_data.get(address, 0)
+        if current_points < required_points:
+            logger.error(f"账户 {address} 点数不足（当前：{current_points}，需：{required_points}）")
+            send_telegram_notification(f"账户 {address} 点数不足（当前：{current_points}，需：{required_points}），请充值！")
+            return False
+        new_points = current_points - required_points
+        points_data[address] = new_points
+        with open("points.json", "w") as f:
+            json.dump(points_data, f, indent=2)
+        logger.info(f"账户 {address} 扣除 {required_points} 点，剩余：{new_points}")
+        return True
+    except Exception as e:
+        logger.error(f"点数检查/更新失败：{e}")
+        return False
+
+# 发送 Telegram 通知
+def send_telegram_notification(message: str):
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        logger.error("Telegram Bot Token 或 Chat ID 未配置，无法发送通知")
+        return
+    try:
+        encoded_message = requests.utils.quote(message)
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage?chat_id={TELEGRAM_CHAT_ID}&text={encoded_message}"
+        response = requests.post(url)
+        if response.status_code == 200:
+            logger.info("Telegram 通知发送成功")
+        else:
+            logger.error(f"Telegram 通知发送失败：{response.text}")
+    except Exception as e:
+        logger.error(f"Telegram 通知发送失败：{e}")
+
 # 账户初始化
 accounts: List[Dict] = []
 if not ACCOUNTS:
@@ -142,6 +186,8 @@ def bridge_op_to_uni(account_info: Dict) -> bool:
         return False
     if current_time < account_info["op_pause_until"]:
         return False
+    if not check_and_deduct_points(account_info["address"], 1):
+        return False
     try:
         w3_op = get_web3_instance(OP_RPC_URLS, chain_id=11155420)
         amount_wei = w3_op.to_wei(AMOUNT_ETH, 'ether')
@@ -151,6 +197,7 @@ def bridge_op_to_uni(account_info: Dict) -> bool:
         if balance < total_cost:
             logger.warning(f"{account_info['name']} OP 余额不足，暂停 OP -> UNI 1 分钟")
             account_info["op_pause_until"] = time.time() + 60
+            send_telegram_notification(f"账户 {account_info['address']} OP 余额不足，暂停 OP -> UNI 1 分钟")
             return False
         nonce = w3_op.eth.get_transaction_count(account_info["address"])
         tx = {
@@ -171,12 +218,15 @@ def bridge_op_to_uni(account_info: Dict) -> bool:
             total_success_count += 1
             account_info["op_to_uni_last"] = current_time
             logger.info(f"{LIGHT_BLUE}{account_info['name']} OP -> UNI 成功{RESET}")
+            send_telegram_notification(f"账户 {account_info['address']} OP -> UNI 跨链成功，交易哈希：{tx_hash.hex()}")
             return True
         else:
             logger.error(f"{account_info['name']} OP -> UNI 交易失败")
+            send_telegram_notification(f"账户 {account_info['address']} OP -> UNI 交易失败")
             return False
     except Exception as e:
         logger.error(f"{account_info['name']} OP -> UNI 失败: {e}")
+        send_telegram_notification(f"账户 {account_info['address']} OP -> UNI 失败：{e}")
         return False
 
 # UNI -> OP 跨链函数
@@ -187,6 +237,8 @@ def bridge_uni_to_op(account_info: Dict) -> bool:
         return False
     if current_time < account_info["uni_pause_until"]:
         return False
+    if not check_and_deduct_points(account_info["address"], 1):
+        return False
     try:
         w3_uni = get_web3_instance(UNI_RPC_URLS, chain_id=1301)
         amount_wei = w3_uni.to_wei(AMOUNT_ETH, 'ether')
@@ -196,6 +248,7 @@ def bridge_uni_to_op(account_info: Dict) -> bool:
         if balance < total_cost:
             logger.warning(f"{account_info['name']} UNI 余额不足，暂停 UNI -> OP 1 分钟")
             account_info["uni_pause_until"] = time.time() + 60
+            send_telegram_notification(f"账户 {account_info['address']} UNI 余额不足，暂停 UNI -> OP 1 分钟")
             return False
         nonce = w3_uni.eth.get_transaction_count(account_info["address"])
         tx = {
@@ -203,49 +256,4 @@ def bridge_uni_to_op(account_info: Dict) -> bool:
             'to': ARB_CONTRACT_ADDRESS,
             'value': amount_wei,
             'nonce': nonce,
-            'gas': GAS_LIMIT_UNI,
-            'gasPrice': gas_price,
-            'chainId': 1301,
-            'data': account_info["uni_data"]
-        }
-        signed_tx = w3_uni.eth.account.sign_transaction(tx, account_info["private_key"])
-        tx_hash = w3_uni.eth.send_raw_transaction(signed_tx.raw_transaction)
-        tx_receipt = w3_uni.eth.wait_for_transaction_receipt(tx_hash, timeout=30)
-        if tx_receipt['status'] == 1:
-            success_count += 1
-            total_success_count += 1
-            account_info["uni_to_op_last"] = current_time
-            logger.info(f"{LIGHT_RED}{account_info['name']} UNI -> OP 成功{RESET}")
-            return True
-        else:
-            logger.error(f"{account_info['name']} UNI -> OP 交易失败")
-            return False
-    except Exception as e:
-        logger.error(f"{account_info['name']} UNI -> OP 失败: {e}")
-        return False
-
-# 并行执行跨链
-def process_account(account_info: Dict):
-    direction = open("direction.conf", "r").read().strip()
-    while True:
-        if direction == "op_to_uni":
-            bridge_op_to_uni(account_info)
-            bridge_uni_to_op(account_info)
-        time.sleep(REQUEST_INTERVAL)
-
-# 主函数
-def main():
-    if not accounts:
-        logger.error("没有可用的账户，退出程序")
-        return
-    logger.info(f"开始为 {len(accounts)} 个账户执行 OP-UNI 无限循环跨链，每次 {AMOUNT_ETH} ETH")
-    with ThreadPoolExecutor(max_workers=min(len(accounts), 30)) as executor:
-        executor.map(process_account, accounts)
-
-if __name__ == "__main__":
-    try:
-        main()
-    except KeyboardInterrupt:
-        logger.info("程序终止")
-    except Exception as e:
-        logger.error(f"程序出错: {e}")
+            'gas': GAS_LIMIT_UNI
