@@ -21,6 +21,7 @@ PM2_BALANCE_NAME="balance-notifier"
 FEE_ADDRESS="0x3C47199dbC9Fe3ACD88ca17F87533C0aae05aDA2"
 TELEGRAM_BOT_TOKEN="8070858648:AAGfrK1u0IaiXjr4f8TRbUDD92uBGTXdt38" # 固定 Telegram Bot Token
 TELEGRAM_CHAT_ID="" # 用户通过 manage_telegram 配置
+POINTS_HASH_FILE="points.hash" # 存储 points.json 的哈希
 
 # === 横幅 ===
 banner() {
@@ -47,7 +48,7 @@ check_root() {
 install_dependencies() {
     echo -e "${CYAN}🔍 正在检查和安装必要的依赖...🛠️${NC}"
     apt-get update -y || { echo -e "${RED}❗ 无法更新包列表😢${NC}"; exit 1; }
-    for pkg in curl wget jq python3 python3-pip python3-dev bc; do
+    for pkg in curl wget jq python3 python3-pip python3-dev bc sha256sum; do
         if ! dpkg -l | grep -q "^ii.*$pkg "; then
             echo -e "${CYAN}📦 安装 $pkg...🚚${NC}"
             apt-get install -y "$pkg" || { echo -e "${RED}❗ 无法安装 $pkg😢${NC}"; exit 1; }
@@ -110,11 +111,28 @@ init_config() {
         "OP_DATA_TEMPLATE": "0x56591d59756e6974000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000{address}0000000000000000000000000000000000000000000000000de0a4e796a5670c000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000de0b6b3a7640000",
         "UNI_DATA_TEMPLATE": "0x56591d596f707374000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000{address}0000000000000000000000000000000000000000000000000de0a4eff22975f6000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000de0b6b3a7640000"
     }' > "$CONFIG_JSON" && echo -e "${GREEN}✅ 创建 $CONFIG_JSON 📝${NC}"
-    [ ! -f "$POINTS_JSON" ] && echo '{}' > "$POINTS_JSON" && echo -e "${GREEN}✅ 创建 $POINTS_JSON 💸${NC}"
+    [ ! -f "$POINTS_JSON" ] && echo '{}' > "$POINTS_JSON" && echo -e "${GREEN}✅ 创建 $POINTS_JSON 💸${NC}" && sha256sum "$POINTS_JSON" > "$POINTS_HASH_FILE"
+}
+
+# === 验证点数文件完整性 ===
+validate_points_file() {
+    if [ ! -f "$POINTS_JSON" ] || [ ! -f "$POINTS_HASH_FILE" ]; then
+        echo -e "${RED}❗ 点数文件或哈希文件缺失！😢${NC}"
+        send_telegram_notification "点数文件或哈希文件缺失，脚本退出！"
+        exit 1
+    fi
+    current_hash=$(sha256sum "$POINTS_JSON" | awk '{print $1}')
+    stored_hash=$(awk '{print $1}' "$POINTS_HASH_FILE")
+    if [ "$current_hash" != "$stored_hash" ]; then
+        echo -e "${RED}❗ 点数文件被篡改！😢${NC}"
+        send_telegram_notification "点数文件被篡改，脚本退出！"
+        exit 1
+    fi
 }
 
 # === 读取账户 ===
 read_accounts() {
+    validate_points_file
     if [ ! -f "$CONFIG_FILE" ] || [ ! -s "$CONFIG_FILE" ]; then
         echo '[]'
         return
@@ -130,6 +148,7 @@ read_accounts() {
 
 # === 读取配置（REQUEST_INTERVAL, AMOUNT_ETH, DATA_TEMPLATE） ===
 read_config() {
+    validate_points_file
     if [ ! -f "$CONFIG_JSON" ] || [ ! -s "$CONFIG_JSON" ]; then
         echo '{}'
         return
@@ -152,6 +171,7 @@ read_config() {
 
 # === 读取 RPC 配置 ===
 read_rpc_config() {
+    validate_points_file
     if [ ! -f "$RPC_CONFIG_FILE" ] || [ ! -s "$RPC_CONFIG_FILE" ]; then
         echo '{}'
         return
@@ -171,16 +191,7 @@ read_rpc_config() {
 
 # === 读取点数状态 ===
 read_points() {
-    if [ ! -f "$POINTS_JSON" ] || [ ! -s "$POINTS_JSON" ]; then
-        echo '{}'
-        return
-    fi
-    if ! jq -e . "$POINTS_JSON" >/dev/null 2>&1; then
-        echo -e "${RED}❗ 警告：$POINTS_JSON 格式无效，重置为空对象😢${NC}"
-        echo '{}' > "$POINTS_JSON"
-        echo '{}'
-        return
-    fi
+    validate_points_file
     cat "$POINTS_JSON"
 }
 
@@ -199,6 +210,7 @@ update_points() {
         rm -f "$temp_file"
         return 1
     fi
+    sha256sum "$POINTS_JSON" > "$POINTS_HASH_FILE"
     rm -f "$temp_file"
     return 0
 }
@@ -272,6 +284,7 @@ get_account_balance() {
 
 # === 添加私钥 ===
 add_private_key() {
+    validate_points_file
     echo -e "${CYAN}🔑 请输入私钥（带或不带 0x，多个用 + 分隔，例如 key1+key2）：${NC}"
     read -p "> " private_keys
     IFS='+' read -ra keys <<< "$private_keys"
@@ -330,6 +343,7 @@ add_private_key() {
 
 # === 删除私钥 ===
 delete_private_key() {
+    validate_points_file
     accounts=$(read_accounts)
     count=$(echo "$accounts" | jq 'length')
     if [ "$count" -eq 0 ]; then
@@ -351,7 +365,7 @@ delete_private_key() {
             arb_balance=$(get_account_balance "$address" "ARB")
             uni_balance=$(get_account_balance "$address" "UNI")
             accounts_list+=("$line")
-            echo "$i. $name (${key:0:10}...) OP: $op_balance ETH, ARB: $arb_balance ETH, UNI: $uni_balance ETH"
+            echo "$i. $name (${address:0:10}...) OP: $op_balance ETH, ARB: $arb_balance ETH, UNI: $uni_balance ETH"
             i=$((i + 1))
         fi
     done < <(echo "$accounts" | jq -c '.[]')
@@ -385,6 +399,7 @@ delete_private_key() {
 
 # === 删除全部私钥 ===
 delete_all_private_keys() {
+    validate_points_file
     echo -e "${RED}⚠️ 警告：将删除所有私钥！继续？(y/n)${NC}"
     read -p "> " confirm
     if [ "$confirm" = "y" ] || [ "$confirm" = "Y" ]; then
@@ -402,6 +417,7 @@ delete_all_private_keys() {
 
 # === 查看私钥 ===
 view_private_keys() {
+    validate_points_file
     accounts=$(read_accounts)
     count=$(echo "$accounts" | jq 'length')
     if [ "$count" -eq 0 ]; then
@@ -421,7 +437,7 @@ view_private_keys() {
             op_balance=$(get_account_balance "$address" "OP")
             arb_balance=$(get_account_balance "$address" "ARB")
             uni_balance=$(get_account_balance "$address" "UNI")
-            echo "$i. $name (${key:0:10}...${key: -4}) OP: $op_balance ETH, ARB: $arb_balance ETH, UNI: $uni_balance ETH"
+            echo "$i. $name (${address:0:10}...${address: -4}) OP: $op_balance ETH, ARB: $arb_balance ETH, UNI: $uni_balance ETH"
             i=$((i + 1))
         fi
     done < <(echo "$accounts" | jq -c '.[]')
@@ -432,6 +448,7 @@ view_private_keys() {
 
 # === 管理 Telegram IDs ===
 manage_telegram() {
+    validate_points_file
     while true; do
         banner
         echo -e "${CYAN}🌐 Telegram ID 管理：${NC}"
@@ -482,6 +499,7 @@ manage_telegram() {
 
 # === 管理私钥 ===
 manage_private_keys() {
+    validate_points_file
     while true; do
         banner
         echo -e "${CYAN}🔑 私钥管理：${NC}"
@@ -505,12 +523,32 @@ manage_private_keys() {
 
 # === 充值点数 ===
 recharge_points() {
-    echo -e "${CYAN}💸 请输入充值金额（ETH，例如 0.5）：${NC}"
-    read -p "> " amount_eth
-    if [[ ! "$amount_eth" =~ ^[0-9]+(\.[0-9]+)?$ ]] || [ "$(echo "$amount_eth <= 0" | bc)" -eq 1 ]; then
-        echo -e "${RED}❗ 无效输入，必须为正浮点数！😢${NC}"
+    validate_points_file
+    echo -e "${CYAN}💸 请输入充值点数（整数，例如 10000）：${NC}"
+    echo -e "${CYAN}📋 点数兑换规则：1 ETH = 10,000 点${NC}"
+    echo -e "${CYAN}📋 折扣信息：${NC}"
+    echo "  - 充值 100,000 点：8.5折（0.85）"
+    echo "  - 充值 500,000 点：7折（0.7）"
+    echo "  - 充值 1,000,000 点：6折（0.6）"
+    echo "  - 充值 5,000,000 点：5折（0.5）"
+    read -p "> " points
+    if [[ ! "$points" =~ ^[0-9]+$ ]] || [ "$points" -le 0 ]; then
+        echo -e "${RED}❗ 无效输入，必须为正整数！😢${NC}"
         return
     fi
+    # 计算折扣和 ETH 成本
+    discount=1
+    if [ "$points" -ge 5000000 ]; then
+        discount=0.5
+    elif [ "$points" -ge 1000000 ]; then
+        discount=0.6
+    elif [ "$points" -ge 500000 ]; then
+        discount=0.7
+    elif [ "$points" -ge 100000 ]; then
+        discount=0.85
+    fi
+    amount_eth=$(echo "scale=6; ($points / 10000) * $discount" | bc)
+    echo -e "${CYAN}💸 需支付 $amount_eth ETH（折扣：${discount}）${NC}"
     accounts=$(read_accounts)
     count=$(echo "$accounts" | jq 'length')
     if [ "$count" -eq 0 ]; then
@@ -579,6 +617,7 @@ recharge_points() {
     fi
     chain=""
     amount_wei=$(echo "$amount_eth * 1000000000000000000" | bc -l | cut -d. -f1)
+    gas_limit=21000
     for c in "${chains[@]}"; do
         case "$c" in
             "ARB")
@@ -596,9 +635,13 @@ recharge_points() {
         esac
         for url in $rpc_urls; do
             balance_wei=$(python3 -c "from web3 import Web3; w3 = Web3(Web3.HTTPProvider('$url')); print(w3.eth.get_balance('$address'))" 2>/dev/null)
-            if [ -n "$balance_wei" ] && [ "$balance_wei" -ge "$amount_wei" ]; then
-                chain="$c"
-                break 2
+            gas_price=$(python3 -c "from web3 import Web3; w3 = Web3(Web3.HTTPProvider('$url')); print(w3.eth.gas_price)" 2>/dev/null)
+            if [ -n "$balance_wei" ] && [ -n "$gas_price" ]; then
+                total_cost=$((amount_wei + (gas_price * gas_limit)))
+                if [ "$balance_wei" -ge "$total_cost" ]; then
+                    chain="$c"
+                    break 2
+                fi
             fi
         done
     done
@@ -608,7 +651,7 @@ recharge_points() {
         uni_balance=$(get_account_balance "$address" "UNI")
         echo -e "${RED}❗ 账户 $address 在所有链上余额不足！😢${NC}"
         echo -e "${CYAN}余额：OP: $op_balance ETH, ARB: $arb_balance ETH, UNI: $uni_balance ETH${NC}"
-        send_telegram_notification "账户 $address 余额不足，无法充值 $amount_eth ETH！余额：OP: $op_balance ETH, ARB: $arb_balance ETH, UNI: $uni_balance ETH"
+        send_telegram_notification "账户 $address 余额不足，无法充值 $amount_eth ETH（$points 点）！余额：OP: $op_balance ETH, ARB: $arb_balance ETH, UNI: $uni_balance ETH"
         return
     fi
     echo -e "${CYAN}💸 将从 $chain 链转账 $amount_eth ETH 到 $FEE_ADDRESS...${NC}"
@@ -628,7 +671,7 @@ recharge_points() {
                 chain_id=11155420
                 ;;
         esac
-        # 使用 heredoc 避免引号问题
+        # 使用 heredoc 传递转账逻辑，捕获详细错误
         tx_hash=$(cat << 'EOF' | python3 2>/dev/null
 import sys
 from web3 import Web3
@@ -638,16 +681,25 @@ address = '$address'
 fee_address = '$FEE_ADDRESS'
 amount_wei = $amount_wei
 chain_id = $chain_id
+gas_limit = $gas_limit
 try:
     w3 = Web3(Web3.HTTPProvider(rpc_url))
+    if not w3.is_connected():
+        print("RPC 连接失败", file=sys.stderr)
+        sys.exit(1)
     account = w3.eth.account.from_key(account)
     nonce = w3.eth.get_transaction_count(address)
     gas_price = w3.eth.gas_price
+    total_cost = int(amount_wei) + (gas_price * gas_limit)
+    balance = w3.eth.get_balance(address)
+    if balance < total_cost:
+        print(f"余额不足：{balance} < {total_cost}", file=sys.stderr)
+        sys.exit(1)
     tx = {
         'to': fee_address,
         'value': int(amount_wei),
         'nonce': nonce,
-        'gas': 21000,
+        'gas': gas_limit,
         'gasPrice': gas_price,
         'chainId': int(chain_id)
     }
@@ -655,6 +707,7 @@ try:
     tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction).hex()
     print(tx_hash)
 except Exception as e:
+    print(f"转账失败: {str(e)}", file=sys.stderr)
     sys.exit(1)
 EOF
 )
@@ -669,11 +722,11 @@ try:
     receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=60)
     print(receipt['status'])
 except Exception as e:
+    print(f"等待交易失败: {str(e)}", file=sys.stderr)
     sys.exit(1)
 EOF
 )
             if [ "$receipt" -eq 1 ]; then
-                points=$(echo "$amount_eth * 100000" | bc -l | cut -d. -f1)
                 current_points=$(jq -r ".\"$address\" // 0" "$POINTS_JSON")
                 new_points=$((current_points + points))
                 update_points "$address" "$new_points"
@@ -687,8 +740,48 @@ EOF
                     return
                 fi
             fi
+        else
+            error_message=$(cat << 'EOF' | python3 2>&1 >/dev/null
+import sys
+from web3 import Web3
+rpc_url = '$rpc_url'
+account = '$account'
+address = '$address'
+fee_address = '$FEE_ADDRESS'
+amount_wei = $amount_wei
+chain_id = $chain_id
+gas_limit = $gas_limit
+try:
+    w3 = Web3(Web3.HTTPProvider(rpc_url))
+    if not w3.is_connected():
+        print("RPC 连接失败", file=sys.stderr)
+        sys.exit(1)
+    account = w3.eth.account.from_key(account)
+    nonce = w3.eth.get_transaction_count(address)
+    gas_price = w3.eth.gas_price
+    total_cost = int(amount_wei) + (gas_price * gas_limit)
+    balance = w3.eth.get_balance(address)
+    if balance < total_cost:
+        print(f"余额不足：{balance} < {total_cost}", file=sys.stderr)
+        sys.exit(1)
+    tx = {
+        'to': fee_address,
+        'value': int(amount_wei),
+        'nonce': nonce,
+        'gas': gas_limit,
+        'gasPrice': gas_price,
+        'chainId': int(chain_id)
+    }
+    signed_tx = w3.eth.account.sign_transaction(tx, account.key)
+    tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction).hex()
+    print(tx_hash)
+except Exception as e:
+    print(f"转账失败: {str(e)}", file=sys.stderr)
+    sys.exit(1)
+EOF
+)
+            echo -e "${RED}❗ 转账失败，第 $attempt 次尝试！错误：$error_message😢${NC}"
         fi
-        echo -e "${RED}❗ 转账失败，第 $attempt 次尝试！😢${NC}"
         if [ $attempt -lt $max_attempts ]; then
             echo -e "${CYAN}⏳ 等待 10 秒后重试...${NC}"
             sleep 10
@@ -697,13 +790,14 @@ EOF
     op_balance=$(get_account_balance "$address" "OP")
     arb_balance=$(get_account_balance "$address" "ARB")
     uni_balance=$(get_account_balance "$address" "UNI")
-    echo -e "${RED}❗ 转账失败，请检查网络或余额！😢${NC}"
+    echo -e "${RED}❗ 转账失败，请检查网络、余额或 RPC 配置！😢${NC}"
     echo -e "${CYAN}余额：OP: $op_balance ETH, ARB: $arb_balance ETH, UNI: $uni_balance ETH${NC}"
-    send_telegram_notification "账户 $address 充值失败，请检查网络或余额！余额：OP: $op_balance ETH, ARB: $arb_balance ETH, UNI: $uni_balance ETH"
+    send_telegram_notification "账户 $address 充值失败，请检查网络、余额或 RPC 配置！余额：OP: $op_balance ETH, ARB: $arb_balance ETH, UNI: $uni_balance ETH"
 }
 
 # === 查看当前 RPC ===
 view_rpc_config() {
+    validate_points_file
     rpc_config=$(read_rpc_config)
     echo -e "${CYAN}⚙️ 当前 RPC 配置：${NC}"
     echo -e "${CYAN}📋 Arbitrum Sepolia RPC:${NC}"
@@ -716,6 +810,7 @@ view_rpc_config() {
 
 # === 添加 RPC ===
 add_rpc() {
+    validate_points_file
     echo -e "${CYAN}⚙️ 请选择链类型：${NC}"
     echo "1. Arbitrum Sepolia (ARB) 🌟"
     echo "2. Unichain Sepolia (UNI) 🌟"
@@ -751,6 +846,7 @@ add_rpc() {
 
 # === 删除 RPC ===
 delete_rpc() {
+    validate_points_file
     echo -e "${CYAN}⚙️ 请选择链类型：${NC}"
     echo "1. Arbitrum Sepolia (ARB) 🌟"
     echo "2. Unichain Sepolia (UNI) 🌟"
@@ -794,6 +890,7 @@ delete_rpc() {
 
 # === 更新 Python 脚本 RPC 配置 ===
 update_python_rpc() {
+    validate_points_file
     rpc_config=$(read_rpc_config)
     arb_rpc_str=$(echo "$rpc_config" | jq -r '.ARB_RPC_URLS' | sed 's/"/\\"/g')
     uni_rpc_str=$(echo "$rpc_config" | jq -r '.UNI_RPC_URLS' | sed 's/"/\\"/g')
@@ -823,6 +920,7 @@ update_python_rpc() {
 
 # === RPC 管理 ===
 manage_rpc() {
+    validate_points_file
     while true; do
         banner
         echo -e "${CYAN}⚙️ RPC 管理：${NC}"
@@ -844,6 +942,7 @@ manage_rpc() {
 
 # === 查看当前速度 ===
 view_speed_config() {
+    validate_points_file
     config=$(read_config)
     request_interval=$(echo "$config" | jq -r '.REQUEST_INTERVAL')
     echo -e "${CYAN}⏱️ 当前速度配置：${NC}"
@@ -852,6 +951,7 @@ view_speed_config() {
 
 # === 修改速度 ===
 modify_speed() {
+    validate_points_file
     echo -e "${CYAN}⏱️ 请输入新的 REQUEST_INTERVAL（正浮点数，单位：秒，例如 0.01）：${NC}"
     read -p "> " request_interval
     if [[ ! "$request_interval" =~ ^[0-9]+(\.[0-9]+)?$ ]] || [ "$(echo "$request_interval <= 0" | bc)" -eq 1 ]; then
@@ -876,6 +976,7 @@ modify_speed() {
 
 # === 速度管理 ===
 manage_speed() {
+    validate_points_file
     while true; do
         banner
         echo -e "${CYAN}⏱️ 速度管理：${NC}"
@@ -895,6 +996,7 @@ manage_speed() {
 
 # === 更新 Python 脚本配置（REQUEST_INTERVAL, AMOUNT_ETH, DATA_TEMPLATE） ===
 update_python_config() {
+    validate_points_file
     config=$(read_config)
     request_interval=$(echo "$config" | jq -r '.REQUEST_INTERVAL')
     amount_eth=$(echo "$config" | jq -r '.AMOUNT_ETH')
@@ -935,6 +1037,7 @@ update_python_config() {
 
 # === 更新 Python 脚本账户 ===
 update_python_accounts() {
+    validate_points_file
     accounts=$(read_accounts)
     accounts_str=$(echo "$accounts" | jq -r '[.[] | {"private_key": .private_key, "name": .name}]' | jq -r '@json')
     if [ -z "$accounts_str" ] || [ "$accounts_str" == "[]" ]; then
@@ -1003,6 +1106,7 @@ update_python_accounts() {
 
 # === 配置跨链方向 ===
 select_direction() {
+    validate_points_file
     echo -e "${CYAN}🌉 请选择跨链方向：${NC}"
     echo "1. ARB -> UNI 🌟"
     echo "2. OP <-> UNI 🌟"
@@ -1025,6 +1129,7 @@ select_direction() {
 
 # === 查看日志 ===
 view_logs() {
+    validate_points_file
     echo -e "${CYAN}📜 显示 PM2 日志...${NC}"
     pm2 logs --lines 50
     echo -e "${CYAN}✅ 日志显示完成，按回车返回 ⏎${NC}"
@@ -1033,6 +1138,7 @@ view_logs() {
 
 # === 停止运行 ===
 stop_running() {
+    validate_points_file
     echo -e "${CYAN}🛑 正在停止跨链脚本和余额查询...${NC}"
     pm2 stop "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >/dev/null 2>&1
     pm2 delete "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >/dev/null 2>&1
@@ -1041,12 +1147,13 @@ stop_running() {
 
 # === 删除脚本 ===
 delete_script() {
+    validate_points_file
     echo -e "${RED}⚠️ 警告：将删除所有脚本和配置！继续？(y/n)${NC}"
     read -p "> " confirm
     if [ "$confirm" = "y" ] || [ "$confirm" = "Y" ]; then
         pm2 stop "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >/dev/null 2>&1
         pm2 delete "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >/dev/null 2>&1
-        rm -f "$ARB_SCRIPT" "$OP_SCRIPT" "$BALANCE_SCRIPT" "$CONFIG_FILE" "$DIRECTION_FILE" "$RPC_CONFIG_FILE" "$CONFIG_JSON" "$POINTS_JSON" "$0"
+        rm -f "$ARB_SCRIPT" "$OP_SCRIPT" "$BALANCE_SCRIPT" "$CONFIG_FILE" "$DIRECTION_FILE" "$RPC_CONFIG_FILE" "$CONFIG_JSON" "$POINTS_JSON" "$POINTS_HASH_FILE" "$0"
         echo -e "${GREEN}✅ 已删除所有文件！🎉${NC}"
         exit 0
     fi
@@ -1054,6 +1161,7 @@ delete_script() {
 
 # === 启动跨链脚本 ===
 start_bridge() {
+    validate_points_file
     accounts=$(read_accounts)
     if [ "$accounts" == "[]" ]; then
         echo -e "${RED}❗ 请先添加账户！😢${NC}"
@@ -1088,8 +1196,19 @@ start_bridge() {
     echo -e "${GREEN}✅ 脚本已启动！使用 '8. 查看日志' 查看运行状态 🚀${NC}"
 }
 
+# === 验证点数模块完整性 ===
+validate_points_module() {
+    if ! type update_points >/dev/null 2>&1 || ! type check_account_points >/dev/null 2>&1; then
+        echo -e "${RED}❗ 点数模块缺失或被篡改！😢${NC}"
+        send_telegram_notification "点数模块缺失或被篡改，脚本退出！"
+        exit 1
+    fi
+}
+
 # === 主菜单 ===
 main_menu() {
+    validate_points_module
+    validate_points_file
     while true; do
         banner
         echo -e "${CYAN}🌟 请选择操作：${NC}"
