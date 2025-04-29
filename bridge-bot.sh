@@ -17,6 +17,7 @@ RPC_CONFIG_FILE="rpc_config.json"
 CONFIG_JSON="config.json"
 POINTS_JSON="points.json"
 ENCRYPTION_KEY_FILE="encryption_key.key"
+TELEGRAM_CONFIG="telegram.conf"
 PYTHON_VERSION="3.8"
 PM2_PROCESS_NAME="bridge-bot"
 PM2_BALANCE_NAME="balance-notifier"
@@ -30,7 +31,7 @@ banner() {
     echo "          跨链桥自动化脚本 by @hao3313076 😎         "
     echo "🌟🌟🌟==================================================🌟🌟🌟"
     echo "关注 Twitter: JJ长10cm | 高效跨链，安全可靠！🚀"
-    echo "请安装顺序配置 以免报错无法运行 ⚠️"
+    echo "请按顺序配置以免报错无法运行 ⚠️"
     echo "🌟🌟🌟==================================================🌟🌟🌟"
     echo -e "${NC}"
 }
@@ -56,34 +57,56 @@ install_dependencies() {
     for pkg in curl wget jq python3 python3-pip python3-dev bc; do
         if ! dpkg -l | grep -q "^ii.*$pkg "; then
             echo -e "${CYAN}📦 安装 $pkg...🚚${NC}"
-            apt-get install -y "$pkg" || { echo -e "${RED}❗ 无法安装 $pkg😢${NC}"; exit 1; }
+            for ((attempt=1; attempt<=max_attempts; attempt++)); do
+                apt-get install -y "$pkg" && break
+                echo -e "${RED}❗ 安装 $pkg 失败，第 $attempt 次尝试😢${NC}"
+                [ $attempt -eq $max_attempts ] && { echo -e "${RED}❗ 无法安装 $pkg😢${NC}"; exit 1; }
+                sleep 5
+            done
         else
             echo -e "${GREEN}✅ $pkg 已安装🎉${NC}"
         fi
     done
     if ! command -v python${PYTHON_VERSION} >/dev/null 2>&1; then
         echo -e "${CYAN}🐍 安装 Python ${PYTHON_VERSION}...📥${NC}"
-        apt-get install -y software-properties-common && add-apt-repository ppa:deadsnakes/ppa -y && apt-get update -y
-        apt-get install -y python${PYTHON_VERSION} python${PYTHON_VERSION}-dev python${PYTHON_VERSION}-distutils || {
-            echo -e "${RED}❗ 无法安装 Python ${PYTHON_VERSION}，使用默认 Python😢${NC}"
-            command -v python3 >/dev/null 2>&1 || { echo -e "${RED}❗ 无可用 Python😢${NC}"; exit 1; }
-        }
+        for ((attempt=1; attempt<=max_attempts; attempt++)); do
+            apt-get install -y software-properties-common && add-apt-repository ppa:deadsnakes/ppa -y && apt-get update -y && break
+            echo -e "${RED}❗ 安装 Python 依赖失败，第 $attempt 次尝试😢${NC}"
+            [ $attempt -eq $max_attempts ] && { echo -e "${RED}❗ 无法安装 Python 依赖😢${NC}"; exit 1; }
+            sleep 5
+        done
+        for ((attempt=1; attempt<=max_attempts; attempt++)); do
+            apt-get install -y python${PYTHON_VERSION} python${PYTHON_VERSION}-dev python${PYTHON_VERSION}-distutils && break
+            echo -e "${RED}❗ 安装 Python ${PYTHON_VERSION} 失败，第 $attempt 次尝试😢${NC}"
+            [ $attempt -eq $max_attempts ] && { echo -e "${RED}❗ 无法安装 Python ${PYTHON_VERSION}，使用默认 Python😢${NC}"; break; }
+            sleep 5
+        done
         curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py
         python${PYTHON_VERSION} get-pip.py && rm get-pip.py
     fi
     if ! command -v pm2 >/dev/null 2>&1; then
         echo -e "${CYAN}🌐 安装 Node.js 和 PM2...📥${NC}"
-        curl -sL https://deb.nodesource.com/setup_16.x | bash -
-        apt-get install -y nodejs && npm install -g pm2 || { echo -e "${RED}❗ 无法安装 PM2😢${NC}"; exit 1; }
+        for ((attempt=1; attempt<=max_attempts; attempt++)); do
+            curl -sL https://deb.nodesource.com/setup_16.x | bash - && apt-get install -y nodejs && npm install -g pm2 && break
+            echo -e "${RED}❗ 安装 Node.js 和 PM2 失败，第 $attempt 次尝试😢${NC}"
+            [ $attempt -eq $max_attempts ] && { echo -e "${RED}❗ 无法安装 PM2😢${NC}"; exit 1; }
+            sleep 5
+        done
     fi
+    PYTHON_BIN=$(command -v python${PYTHON_VERSION} || command -v python3)
     for py_pkg in web3 python-telegram-bot cryptography; do
-        if ! python3 -m pip show "$py_pkg" >/dev/null 2>&1; then
-            echo -e "${CYAN}📦 安装 $py_pkg...🚚${NC}"
-            if [ "$py_pkg" = "python-telegram-bot" ]; then
-                python3 -m pip install "$py_pkg==13.7" || { echo -e "${RED}❗ 无法安装 $py_pkg😢${NC}"; exit 1; }
-            else
-                python3 -m pip install "$py_pkg" || { echo -e "${RED}❗ 无法安装 $py_pkg😢${NC}"; exit 1; }
-            fi
+        if ! $PYTHON_BIN -m pip show "$py_pkg" >/dev/null 2>&1; then
+            echo -e "${CYAN}📦 安装 Python 包 $py_pkg...🚚${NC}"
+            for ((attempt=1; attempt<=max_attempts; attempt++)); do
+                if [ "$py_pkg" = "python-telegram-bot" ]; then
+                    $PYTHON_BIN -m pip install "$py_pkg==13.7" && break
+                else
+                    $PYTHON_BIN -m pip install "$py_pkg" && break
+                fi
+                echo -e "${RED}❗ 安装 $py_pkg 失败，第 $attempt 次尝试😢${NC}"
+                [ $attempt -eq $max_attempts ] && { echo -e "${RED}❗ 无法安装 $py_pkg😢${NC}"; exit 1; }
+                sleep 5
+            done
         else
             echo -e "${GREEN}✅ $py_pkg 已安装🎉${NC}"
         fi
@@ -91,23 +114,9 @@ install_dependencies() {
     echo -e "${GREEN}✅ 依赖安装完成！🎉${NC}"
 }
 
-# === 下载 Python 脚本 ===
-download_python_scripts() {
-    echo -e "${CYAN}📥 下载 Python 脚本...🚀${NC}"
-    for script in "$ARB_SCRIPT" "$OP_SCRIPT" "$BALANCE_SCRIPT"; do
-        if [ ! -f "$script" ]; then
-            wget -O "$script" "https://raw.githubusercontent.com/yinghao888/t3rn-swap/main/$script" || { echo -e "${RED}❗ 无法下载 $script😢${NC}"; exit 1; }
-            chmod +x "$script"
-            echo -e "${GREEN}✅ $script 下载完成🎉${NC}"
-        else
-            echo -e "${GREEN}✅ $script 已存在，跳过下载😎${NC}"
-        fi
-    done
-}
-
 # === 初始化配置文件 ===
 init_config() {
-    [ ! -f "$CONFIG_FILE" ] && echo '[]' > "$CONFIG_FILE" && echo -e "${GREEN}✅ 创建 $CONFIG_FILE 🎉${NC}"
+    [ ! -f "$CONFIG_FILE" ] && echo '[]' > "$CONFIG_FILE" && chmod 600 "$CONFIG_FILE" && echo -e "${GREEN}✅ 创建 $CONFIG_FILE 🎉${NC}"
     [ ! -f "$DIRECTION_FILE" ] && echo "arb_to_uni" > "$DIRECTION_FILE" && echo -e "${GREEN}✅ 默认方向: ARB -> UNI 🌉${NC}"
     [ ! -f "$RPC_CONFIG_FILE" ] && echo '{
         "ARB_RPC_URLS": ["https://arbitrum-sepolia-rpc.publicnode.com", "https://sepolia-rollup.arbitrum.io/rpc", "https://arbitrum-sepolia.drpc.org"],
@@ -122,8 +131,9 @@ init_config() {
         "OP_DATA_TEMPLATE": "0x56591d59756e6974000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000{address}0000000000000000000000000000000000000000000000000de0a4e796a5670c000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000de0b6b3a7640000",
         "UNI_DATA_TEMPLATE": "0x56591d596f707374000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000{address}0000000000000000000000000000000000000000000000000de0a4eff22975f6000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000de0b6b3a7640000"
     }' > "$CONFIG_JSON" && echo -e "${GREEN}✅ 创建 $CONFIG_JSON 📝${NC}"
-    [ ! -f "$POINTS_JSON" ] && echo '{}' > "$POINTS_JSON" && echo -e "${GREEN}✅ 创建 $POINTS_JSON 💸${NC}"
-    [ ! -f "$ENCRYPTION_KEY_FILE" ] && python3 -c "from cryptography.fernet import Fernet; Fernet.generate_key().decode('utf-8')" > "$ENCRYPTION_KEY_FILE" && chmod 600 "$ENCRYPTION_KEY_FILE" && echo -e "${GREEN}✅ 创建 $ENCRYPTION_KEY_FILE 🔑${NC}"
+    [ ! -f "$POINTS_JSON" ] && echo '{}' > "$POINTS_JSON" && chmod 600 "$POINTS_JSON" && echo -e "${GREEN}✅ 创建 $POINTS_JSON 💸${NC}"
+    [ ! -f "$ENCRYPTION_KEY_FILE" ] && python3 -c "from cryptography.fernet import Fernet; open('$ENCRYPTION_KEY_FILE', 'wb').write(Fernet.generate_key())" && chmod 600 "$ENCRYPTION_KEY_FILE" && echo -e "${GREEN}✅ 创建 $ENCRYPTION_KEY_FILE 🔑${NC}"
+    [ ! -f "$TELEGRAM_CONFIG" ] && echo '{"chat_ids": []}' > "$TELEGRAM_CONFIG" && chmod 600 "$TELEGRAM_CONFIG" && echo -e "${GREEN}✅ 创建 $TELEGRAM_CONFIG 🌐${NC}"
 }
 
 # === 读取账户 ===
@@ -191,6 +201,7 @@ read_points() {
     if ! jq -e . "$POINTS_JSON" >/dev/null 2>&1; then
         echo -e "${RED}❗ 警告：$POINTS_JSON 格式无效，重置为空对象😢${NC}"
         echo '{}' > "$POINTS_JSON"
+        chmod 600 "$POINTS_JSON"
         echo '{}'
         return
     fi
@@ -209,8 +220,10 @@ update_points() {
     if ! jq -e . "$POINTS_JSON" >/dev/null 2>&1; then
         echo -e "${RED}❗ 错误：写入 $POINTS_JSON 失败，恢复原始内容😢${NC}"
         mv "$temp_file" "$POINTS_JSON"
+        chmod 600 "$POINTS_JSON"
         return 1
     fi
+    chmod 600 "$POINTS_JSON"
     rm "$temp_file"
     return 0
 }
@@ -259,6 +272,7 @@ add_private_key() {
         mv "$temp_file" "$CONFIG_FILE"
         return
     fi
+    chmod 600 "$CONFIG_FILE"
     rm "$temp_file"
     update_python_accounts
     echo -e "${GREEN}✅ 已添加 $added 个账户！🎉${NC}"
@@ -306,6 +320,7 @@ delete_private_key() {
         mv "$temp_file" "$CONFIG_FILE"
         return
     fi
+    chmod 600 "$CONFIG_FILE"
     rm "$temp_file"
     update_python_accounts
     echo -e "${GREEN}✅ 已删除账户！🎉${NC}"
@@ -323,6 +338,7 @@ delete_all_private_keys() {
             echo -e "${RED}❗ 错误：写入 $CONFIG_FILE 失败😢${NC}"
             return
         fi
+        chmod 600 "$CONFIG_FILE"
         update_python_accounts
         echo -e "${GREEN}✅ 已删除所有私钥！🎉${NC}"
         echo -e "${CYAN}📋 当前 accounts.json 内容：${NC}"
@@ -374,10 +390,12 @@ manage_telegram() {
                fi
                if [ ! -f "$TELEGRAM_CONFIG" ]; then
                    echo '{"chat_ids": []}' > "$TELEGRAM_CONFIG"
+                   chmod 600 "$TELEGRAM_CONFIG"
                fi
                telegram_config=$(cat "$TELEGRAM_CONFIG")
                new_config=$(echo "$telegram_config" | jq -c ".chat_ids += [\"$chat_id\"] | .chat_ids |= (map(tonumber) | unique)")
                echo "$new_config" > "$TELEGRAM_CONFIG"
+               chmod 600 "$TELEGRAM_CONFIG"
                echo -e "${GREEN}✅ 已添加 Telegram ID: $chat_id 🎉${NC}"
                ;;
             2) if [ ! -f "$TELEGRAM_CONFIG" ]; then
@@ -396,7 +414,7 @@ manage_telegram() {
                    echo "$i. $id"
                    i=$((i + 1))
                done <<< "$chat_ids"
-               echo.ConcurrentModificationException: Failed to delete message due to concurrent modification
+               echo -e "${CYAN}🔍 请输入要删除的 ID 编号（或 0 取消）：${NC}"
                read -p "> " index
                if [ "$index" -eq 0 ]; then
                    continue
@@ -407,6 +425,7 @@ manage_telegram() {
                fi
                new_config=$(echo "$telegram_config" | jq -c "del(.chat_ids[$((index-1))])")
                echo "$new_config" > "$TELEGRAM_CONFIG"
+               chmod 600 "$TELEGRAM_CONFIG"
                echo -e "${GREEN}✅ 已删除 Telegram ID！🎉${NC}"
                ;;
             3) if [ ! -f "$TELEGRAM_CONFIG" ]; then
@@ -490,7 +509,7 @@ recharge_points() {
         return
     fi
     account=$(echo "${accounts_list[$((index-1))]}" | jq -r '.private_key')
-    address=$(python3 -c "from web3 import Web3; print(Web3(Web3.HTTPProvider('https://unichain-sepolia-rpc.publicnode.com')).eth.account.from_key('$account').address)")
+    address=$(python3 -c "from web3 import Web3; print(Web3(Web3.HTTPProvider('https://unichain-sepolia-rpc.publicnode.com')).eth.account.from_key('$account').address)" 2>/dev/null)
     if [ -z "$address" ]; then
         echo -e "${RED}❗ 无法获取账户地址！😢${NC}"
         return
@@ -1050,10 +1069,37 @@ delete_script() {
     if [ "$confirm" = "y" ] || [ "$confirm" = "Y" ]; then
         pm2 stop "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >/dev/null 2>&1
         pm2 delete "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >/dev/null 2>&1
-        rm -f "$ARB_SCRIPT" "$OP_SCRIPT" "$BALANCE_SCRIPT" "$CONFIG_FILE" "$DIRECTION_FILE" "$RPC_CONFIG_FILE" "$CONFIG_JSON" "$POINTS_JSON" "$ENCRYPTION_KEY_FILE" "$0"
+        rm -f "$ARB_SCRIPT" "$OP_SCRIPT" "$BALANCE_SCRIPT" "$CONFIG_FILE" "$DIRECTION_FILE" "$RPC_CONFIG_FILE" "$CONFIG_JSON" "$POINTS_JSON" "$ENCRYPTION_KEY_FILE" "$TELEGRAM_CONFIG" "$0"
         echo -e "${GREEN}✅ 已删除所有文件！🎉${NC}"
         exit 0
     fi
+}
+
+# === 检查环境 ===
+check_environment() {
+    echo -e "${CYAN}🔍 检查运行环境...${NC}"
+    if ! command -v jq >/dev/null 2>&1; then
+        echo -e "${RED}❗ jq 未安装，请运行 install_dependencies😢${NC}"
+        exit 1
+    fi
+    if ! command -v pm2 >/dev/null 2>&1; then
+        echo -e "${RED}❗ pm2 未安装，请运行 install_dependencies😢${NC}"
+        exit 1
+    fi
+    PYTHON_BIN=$(command -v python${PYTHON_VERSION} || command -v python3)
+    if ! $PYTHON_BIN -m pip show web3 >/dev/null 2>&1; then
+        echo -e "${RED}❗ web3 包未安装，请运行 install_dependencies😢${NC}"
+        exit 1
+    fi
+    if ! $PYTHON_BIN -m pip show python-telegram-bot >/dev/null 2>&1; then
+        echo -e "${RED}❗ python-telegram-bot 包未安装，请运行 install_dependencies😢${NC}"
+        exit 1
+    fi
+    if ! $PYTHON_BIN -m pip show cryptography >/dev/null 2>&1; then
+        echo -e "${RED}❗ cryptography 包未安装，请运行 install_dependencies😢${NC}"
+        exit 1
+    fi
+    echo -e "${GREEN}✅ 环境检查通过！🎉${NC}"
 }
 
 # === 启动跨链脚本 ===
@@ -1066,15 +1112,16 @@ start_bridge() {
     direction=$(cat "$DIRECTION_FILE")
     pm2 stop "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >/dev/null 2>&1
     pm2 delete "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >/dev/null 2>&1
+    PYTHON_BIN=$(command -v python${PYTHON_VERSION} || command -v python3)
     if [ "$direction" = "arb_to_uni" ]; then
-        pm2 start "$ARB_SCRIPT" --name "$PM2_PROCESS_NAME" --interpreter python3
+        pm2 start "$ARB_SCRIPT" --name "$PM2_PROCESS_NAME" --interpreter "$PYTHON_BIN"
     elif [ "$direction" = "op_to_uni" ]; then
-        pm2 start "$OP_SCRIPT" --name "$PM2_PROCESS_NAME" --interpreter python3
+        pm2 start "$OP_SCRIPT" --name "$PM2_PROCESS_NAME" --interpreter "$PYTHON_BIN"
     else
         echo -e "${RED}❗ 无效的跨链方向：$direction，默认使用 ARB -> UNI😢${NC}"
-        pm2 start "$ARB_SCRIPT" --name "$PM2_PROCESS_NAME" --interpreter python3
+        pm2 start "$ARB_SCRIPT" --name "$PM2_PROCESS_NAME" --interpreter "$PYTHON_BIN"
     fi
-    pm2 start "$BALANCE_SCRIPT" --name "$PM2_BALANCE_NAME" --interpreter python3
+    pm2 start "$BALANCE_SCRIPT" --name "$PM2_BALANCE_NAME" --interpreter "$PYTHON_BIN"
     pm2 save
     echo -e "${GREEN}✅ 脚本已启动！使用 '8. 查看日志' 查看运行状态 🚀${NC}"
 }
@@ -1122,6 +1169,7 @@ main_menu() {
 # === 主程序 ===
 check_root
 install_dependencies
+check_environment
 init_config
 main_menu
 ```
