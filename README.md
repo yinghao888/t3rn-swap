@@ -5,5 +5,5 @@ wget -O bridge-bot.sh https://raw.githubusercontent.com/yinghao888/t3rn-swap/mai
 ```
 
 
-
-![image](https://github.com/user-attachments/assets/baf3930c-54b3-4151-b1dd-005919108fd1)
+7和8 如果项目方没有更新最低跨链金额 就不要动
+![image](https://github.com/user-attachments/assets/fde673b5-b200-43a3-9cc6-f18c09b7933d)
