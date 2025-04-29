@@ -295,7 +295,6 @@ get_account_balance() {
         echo "0"
         return 1
     fi
-    # 转换为 ETH，保留 6 位小数
     balance_eth=$(echo "scale=6; $balance_wei / 1000000000000000000" | bc)
     echo "$balance_eth"
 }
@@ -324,7 +323,6 @@ add_private_key() {
             echo -e "${RED}❗ 私钥 ${formatted_key:0:10}... 已存在，跳过😢${NC}"
             continue
         fi
-        # 计算地址
         address=$(python3 -c "from web3 import Web3; print(Web3(Web3.HTTPProvider('https://unichain-sepolia-rpc.publicnode.com')).eth.account.from_key('$formatted_key').address)" 2>/dev/null)
         if [ -z "$address" ]; then
             echo -e "${RED}❗ 无法计算私钥 ${formatted_key:0:10}... 的地址，跳过😢${NC}"
@@ -554,7 +552,6 @@ recharge_points() {
         echo -e "${RED}❗ 无效输入，必须为正整数！😢${NC}"
         return
     fi
-    # 计算折扣和 ETH 成本
     discount=1
     if [ "$points" -ge 5000000 ]; then
         discount=0.5
@@ -586,7 +583,6 @@ recharge_points() {
                 echo -e "${RED}❗ 无法计算账户 $name 的地址，跳过😢${NC}"
                 continue
             fi
-            # 更新 accounts.json 中的地址
             temp_file=$(mktemp)
             echo "$accounts" > "$temp_file"
             accounts_json=$(echo "$accounts" | jq -c ".[] | select(.private_key == \"$key\") |= . + {\"address\": \"$address\"}")
@@ -689,7 +685,6 @@ recharge_points() {
                 chain_id=11155420
                 ;;
         esac
-        # 使用 heredoc 传递转账逻辑，捕获详细错误
         tx_output=$(cat << 'EOF' | python3 2>&1
 import sys
 from web3 import Web3
@@ -812,7 +807,7 @@ add_rpc() {
     rpc_config=$(read_rpc_config)
     temp_file=$(mktemp)
     echo "$rpc_config" > "$temp_file"
-    new_config=$(echo "$rpc_config" | jq -c ".$chain_key += [\"$rpc_url\"]")
+    new_config=$(echo "$rpc_config" | jq -c ".${chain_key} += [\"$rpc_url\"]")
     echo "$new_config" > "$RPC_CONFIG_FILE"
     if ! jq -e . "$RPC_CONFIG_FILE" >/dev/null 2>&1; then
         echo -e "${RED}❗ 错误：写入 $RPC_CONFIG_FILE 失败，恢复原始内容😢${NC}"
@@ -840,13 +835,13 @@ delete_rpc() {
         *) echo -e "${RED}❗ 无效链类型！😢${NC}"; return ;;
     esac
     rpc_config=$(read_rpc_config)
-    count=$(echo "$rpc_config" | jq ".$chain_key | length")
+    count=$(echo "$rpc_config" | jq ".${chain_key} | length")
     if [ "$count" -eq 0 ]; then
         echo -e "${RED}❗ $chain_key RPC 列表为空！😢${NC}"
         return
     fi
     echo -e "${CYAN}📋 当前 $chain_key RPC 列表：${NC}"
-    echo "$rpc_config" | jq -r ".$chain_key[]" | nl -w2 -s '. '
+    echo "$rpc_config" | jq -r ".${chain_key}[]" | nl -w2 -s '. '
     echo -e "${CYAN}🔍 请输入要删除的 RPC 编号（或 0 取消）：${NC}"
     read -p "> " index
     [ "$index" -eq 0 ] && return
@@ -856,7 +851,7 @@ delete_rpc() {
     fi
     temp_file=$(mktemp)
     echo "$rpc_config" > "$temp_file"
-    new_config=$(echo "$rpc_config" | jq -c "del(.$chain_key[$((index-1))])")
+    new_config=$(echo "$rpc_config" | jq -c "del(.${chain_key}[$((index-1))])")
     echo "$new_config" > "$RPC_CONFIG_FILE"
     if ! jq -e . "$RPC_CONFIG_FILE" >/dev/null 2>&1; then
         echo -e "${RED}❗ 错误：写入 $RPC_CONFIG_FILE 失败，恢复原始内容😢${NC}"
@@ -995,14 +990,14 @@ update_python_config() {
             return
         fi
     done
-    sed -i "/^REQUEST_INTERVAL = /c\REQUEST_INTERVAL = $request_interval" "$ARB_SCRIPT"
-    sed -i "/^AMOUNT_ETH = /c\AMOUNT_ETH = $amount_eth" "$ARB_SCRIPT"
-    sed -i "/^UNI_TO_ARB_DATA_TEMPLATE = /c\UNI_TO_ARB_DATA_TEMPLATE = \"$uni_to_arb_data\"" "$ARB_SCRIPT"
-    sed -i "/^ARB_TO_UNI_DATA_TEMPLATE = /c\ARB_TO_UNI_DATA_TEMPLATE = \"$arb_to_uni_data\"" "$ARB_SCRIPT"
-    sed -i "/^REQUEST_INTERVAL = /c\REQUEST_INTERVAL = $request_interval" "$OP_SCRIPT"
-    sed -i "/^AMOUNT_ETH = /c\AMOUNT_ETH = $amount_eth" "$OP_SCRIPT"
-    sed -i "/^OP_DATA_TEMPLATE = /c\OP_DATA_TEMPLATE = \"$op_data\"" "$OP_SCRIPT"
-    sed -i "/^UNI_DATA_TEMPLATE = /c\UNI_DATA_TEMPLATE = \"$uni_data\"" "$OP_SCRIPT"
+    sed -i "s|^REQUEST_INTERVAL = .*|REQUEST_INTERVAL = $request_interval|" "$ARB_SCRIPT"
+    sed -i "s|^AMOUNT_ETH = .*|AMOUNT_ETH = $amount_eth|" "$ARB_SCRIPT"
+    sed -i "s|^UNI_TO_ARB_DATA_TEMPLATE = .*|UNI_TO_ARB_DATA_TEMPLATE = \"$uni_to_arb_data\"|" "$ARB_SCRIPT"
+    sed -i "s|^ARB_TO_UNI_DATA_TEMPLATE = .*|ARB_TO_UNI_DATA_TEMPLATE = \"$arb_to_uni_data\"|" "$ARB_SCRIPT"
+    sed -i "s|^REQUEST_INTERVAL = .*|REQUEST_INTERVAL = $request_interval|" "$OP_SCRIPT"
+    sed -i "s|^AMOUNT_ETH = .*|AMOUNT_ETH = $amount_eth|" "$OP_SCRIPT"
+    sed -i "s|^OP_DATA_TEMPLATE = .*|OP_DATA_TEMPLATE = \"$op_data\"|" "$OP_SCRIPT"
+    sed -i "s|^UNI_DATA_TEMPLATE = .*|UNI_DATA_TEMPLATE = \"$uni_data\"|" "$OP_SCRIPT"
     echo -e "${GREEN}✅ 已更新 $ARB_SCRIPT 和 $OP_SCRIPT 的配置！🎉${NC}"
     echo -e "${CYAN}📋 当前 $ARB_SCRIPT 配置：${NC}"
     grep "^REQUEST_INTERVAL =" "$ARB_SCRIPT"
@@ -1034,23 +1029,20 @@ update_python_accounts() {
             echo -e "${RED}❗ 错误：$script 不可写，请检查权限😢${NC}"
             return 1
         fi
-        # 备份原始文件
         temp_file=$(mktemp)
         cp "$script" "$temp_file" || {
             echo -e "${RED}❗ 错误：无法备份 $script😢${NC}"
             rm -f "$temp_file"
             return 1
         }
-        # 替换 ACCOUNTS 行
         if grep -q "^ACCOUNTS = " "$script"; then
-            sed "/^ACCOUNTS = /c\ACCOUNTS = $accounts_str" "$script" > "$script.tmp" || {
+            sed "s|^ACCOUNTS = .*|ACCOUNTS = $accounts_str|" "$script" > "$script.tmp" || {
                 echo -e "${RED}❗ 错误：更新 $script 失败😢${NC}"
                 mv "$temp_file" "$script"
                 rm -f "$script.tmp"
                 return 1
             }
         else
-            # 如果 ACCOUNTS 未定义，追加到文件开头
             echo "ACCOUNTS = $accounts_str" > "$script.tmp"
             cat "$script" >> "$script.tmp" || {
                 echo -e "${RED}❗ 错误：追加 $script 失败😢${NC}"
@@ -1059,14 +1051,12 @@ update_python_accounts() {
                 return 1
             }
         fi
-        # 验证更新结果
         mv "$script.tmp" "$script" || {
             echo -e "${RED}❗ 错误：移动临时文件到 $script 失败😢${NC}"
             mv "$temp_file" "$script"
             return 1
         }
         current_accounts=$(grep "^ACCOUNTS = " "$script" | sed 's/ACCOUNTS = //')
-        # 规范化比较，忽略空格和换行差异
         normalized_accounts_str=$(echo "$accounts_str" | tr -d ' \n')
         normalized_current_accounts=$(echo "$current_accounts" | tr -d ' \n')
         if [ "$normalized_current_accounts" != "$normalized_accounts_str" ]; then
@@ -1148,7 +1138,6 @@ start_bridge() {
         echo -e "${RED}❗ 请先添加账户！😢${NC}"
         return
     fi
-    # 检查每个账户的点数
     while IFS= read -r account; do
         address=$(echo "$account" | jq -r '.address' || python3 -c "from web3 import Web3; print(Web3(Web3.HTTPProvider('https://unichain-sepolia-rpc.publicnode.com')).eth.account.from_key('$(echo "$account" | jq -r '.private_key')').address)" 2>/dev/null)
         if [ -z "$address" ]; then
@@ -1180,4 +1169,54 @@ start_bridge() {
 # === 验证点数模块完整性 ===
 validate_points_module() {
     if ! type update_points >/dev/null 2>&1 || ! type check_account_points >/dev/null 2>&1; then
-        echo -e "${RED}❗ 点数模块缺失或被篡
+        echo -e "${RED}❗ 点数模块缺失或被篡改！😢${NC}"
+        send_telegram_notification "点数模块缺失或被篡改，脚本退出！"
+        exit 1
+    fi
+}
+
+# === 主菜单 ===
+main_menu() {
+    validate_points_module
+    if [ -z "$TELEGRAM_CHAT_ID" ]; then
+        echo -e "${CYAN}⚠️ 请配置 Telegram Chat ID 以接收通知！进入选项 1 进行设置。${NC}"
+    fi
+    while true; do
+        banner
+        echo -e "${CYAN}🌟 请选择操作：${NC}"
+        echo "1. 配置 Telegram 🌐"
+        echo "2. 配置私钥 🔑"
+        echo "3. 充值点数 💸"
+        echo "4. 配置跨链方向 🌉"
+        echo "5. 启动跨链脚本 🚀"
+        echo "6. RPC 管理 ⚙️"
+        echo "7. 速度管理 ⏱️"
+        echo "8. 查看日志 📜"
+        echo "9. 停止运行 🛑"
+        echo "10. 删除脚本 🗑️"
+        echo "11. 退出 👋"
+        read -p "> " choice
+        case $choice in
+            1) manage_telegram ;;
+            2) manage_private_keys ;;
+            3) recharge_points ;;
+            4) select_direction ;;
+            5) start_bridge ;;
+            6) manage_rpc ;;
+            7) manage_speed ;;
+            8) view_logs ;;
+            9) stop_running ;;
+            10) delete_script ;;
+            11) echo -e "${GREEN}👋 退出！${NC}"; exit 0 ;;
+            *) echo -e "${RED}❗ 无效选项！😢${NC}" ;;
+        esac
+        read -p "按回车继续... ⏎"
+    done
+}
+
+# === 主程序 ===
+check_root
+install_dependencies
+download_python_scripts
+init_config
+main_menu
