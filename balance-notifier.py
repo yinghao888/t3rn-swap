@@ -110,47 +110,4 @@ async def send_balance_update(bot, previous_caldera_balance, interval_count, sta
     message = f"📊 {SYMBOL} 总余额更新 ({time.strftime('%Y-%m-%d %H:%M:%S')}):\n"
     message += f"当前 {SYMBOL} 总余额: {caldera_balance:.4f} {SYMBOL}\n"
     message += f"前1分钟增加: {difference:+.4f} {SYMBOL}\n"
-    message += f"历史总共增加: {total_increase:+.4f} {SYMBOL}\n"
-    message += f"总共运行时间: {format_time(elapsed_time)}\n"
-    message += f"24小时预估收益: {estimated_24h:+.4f} {SYMBOL}"
-    
-    print(f"尝试发送消息: {message}")
-    for chat_id in chat_ids:
-        try:
-            await bot.send_message(chat_id=chat_id, text=message, parse_mode='Markdown')
-            print(f"消息发送成功到 {chat_id}")
-        except Exception as e:
-            print(f"消息发送失败到 {chat_id}: {str(e)}")
-    
-    return caldera_balance
-
-# 主循环
-async def main():
-    print("启动 Telegram Bot...")
-    try:
-        bot = Bot(TELEGRAM_TOKEN)
-    except Exception as e:
-        print(f"错误：无法初始化 Telegram Bot ({str(e)})")
-        exit(1)
-    chat_ids = get_chat_ids()
-    accounts = get_accounts()
-    
-    previous_caldera_balance = None
-    interval_count = 0
-    start_time = time.time()
-    initial_caldera_balance = get_caldera_balance(accounts)
-    
-    while True:
-        interval_count += 1
-        previous_caldera_balance = await send_balance_update(bot, previous_caldera_balance, interval_count, start_time, initial_caldera_balance, accounts, chat_ids)
-        print(f"等待下一次更新...")
-        await asyncio.sleep(60)
-
-if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        print("程序终止")
-    except Exception as e:
-        print(f"程序出错: {str(e)}")
-```
+    message += f"历史总共增加: {total_increase:+.
