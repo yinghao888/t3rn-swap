@@ -68,10 +68,16 @@ install_dependencies() {
         curl -sL https://deb.nodesource.com/setup_16.x | bash -
         apt-get install -y nodejs && npm install -g pm2 || { echo -e "${RED}❗ 无法安装 PM2😢${NC}"; exit 1; }
     fi
-    for py_pkg in web3; do
+    for py_pkg in web3 python-telegram-bot; do
         if ! python3 -m pip show "$py_pkg" >/dev/null 2>&1; then
             echo -e "${CYAN}📦 安装 $py_pkg...🚚${NC}"
-            pip3 install "$py_pkg" || { echo -e "${RED}❗ 无法安装 $py_pkg😢${NC}"; exit 1; }
+            if [ "$py_pkg" = "python-telegram-bot" ]; then
+                pip3 install "$py_pkg==13.7" || { echo -e "${RED}❗ 无法安装 $py_pkg😢${NC}"; exit 1; }
+            else
+                pip3 install "$py_pkg" || { echo -e "${RED}❗ 无法安装 $py_pkg😢${NC}"; exit 1; }
+            fi
+        else
+            echo -e "${GREEN}✅ $py_pkg 已安装🎉${NC}"
         fi
     done
     echo -e "${GREEN}✅ 依赖安装完成！🎉${NC}"
@@ -404,6 +410,7 @@ manage_private_keys() {
 # === 充值点数 ===
 recharge_points() {
     echo -e "${CYAN}💸 请输入充值金额（ETH，例如 0.5）：${NC}"
+    echo -e "${CYAN}📝 提示：1 ETH = 10万次跨链点数，每次跨链消耗 1 点${NC}"
     read -p "> " amount_eth
     if [[ ! "$amount_eth" =~ ^[0-9]+(\.[0-9]+)?$ ]] || [ "$(echo "$amount_eth <= 0" | bc)" -eq 1 ]; then
         echo -e "${RED}❗ 无效输入，必须为正浮点数！😢${NC}"
@@ -435,50 +442,73 @@ recharge_points() {
     fi
     account=$(echo "${accounts_list[$((index-1))]}" | jq -r '.private_key')
     address=$(echo "${accounts_list[$((index-1))]}" | jq -r '.address' || python3 -c "from web3 import Web3; print(Web3(Web3.HTTPProvider('https://unichain-sepolia-rpc.publicnode.com')).eth.account.from_key('$account').address)")
-    direction=$(cat "$DIRECTION_FILE")
-    if [ "$direction" = "arb_to_uni" ]; then
-        chains=("ARB" "UNI")
-    else
-        chains=("OP" "UNI")
-    fi
-    chain=""
     amount_wei=$(echo "$amount_eth * 1000000000000000000" | bc -l | cut -d. -f1)
-    for c in "${chains[@]}"; do
-        if [ "$c" = "ARB" ]; then
-            rpc_urls=$(jq -r '.ARB_RPC_URLS[]' "$RPC_CONFIG_FILE")
-            chain_id=421614
-        elif [ "$c" = "UNI" ]; then
-            rpc_urls=$(jq -r '.UNI_RPC_URLS[]' "$RPC_CONFIG_FILE")
-            chain_id=1301
-        elif [ "$c" = "OP" ]; then
-            rpc_urls=$(jq -r '.OP_RPC_URLS[]' "$RPC_CONFIG_FILE")
-            chain_id=11155420
-        fi
+
+    # 查询三个链的余额
+    echo -e "${CYAN}🔎 查询账户 $address 的余额...${NC}"
+    balances=()
+    chains=("ARB" "UNI" "OP")
+    chain_configs=(
+        "ARB_RPC_URLS 421614 ARB"
+        "UNI_RPC_URLS 1301 UNI"
+        "OP_RPC_URLS 11155420 OP"
+    )
+    sufficient_chains=()
+    for config in "${chain_configs[@]}"; do
+        read rpc_key chain_id chain_name <<< "$config"
+        rpc_urls=$(jq -r ".$rpc_key[]" "$RPC_CONFIG_FILE")
+        balance_found=false
         for url in $rpc_urls; do
             balance=$(python3 -c "from web3 import Web3; w3 = Web3(Web3.HTTPProvider('$url')); print(w3.eth.get_balance('$address'))" 2>/dev/null)
-            if [ -n "$balance" ] && [ "$balance" -ge "$amount_wei" ]; then
-                chain="$c"
-                break 2
+            if [ -n "$balance" ]; then
+                balance_eth=$(python3 -c "print($balance / 10**18)")
+                balances+=("$chain_name: $balance_eth ETH")
+                if [ "$balance" -ge "$amount_wei" ]; then
+                    sufficient_chains+=("$chain_name $rpc_urls $chain_id")
+                fi
+                balance_found=true
+                break
             fi
         done
+        if [ "$balance_found" = false ]; then
+            balances+=("$chain_name: 查询失败")
+        fi
     done
-    if [ -z "$chain" ]; then
-        echo -e "${RED}❗ 账户 $address 在 $chains 链上余额不足！😢${NC}"
+
+    # 显示余额
+    echo -e "${CYAN}📊 账户余额：${NC}"
+    for balance in "${balances[@]}"; do
+        echo -e "  $balance"
+    done
+
+    # 检查是否有足够余额的链
+    if [ ${#sufficient_chains[@]} -eq 0 ]; then
+        echo -e "${RED}❗ 账户 $address 在所有链（ARB, UNI, OP）上余额不足！😢${NC}"
         return
     fi
+
+    # 让用户选择转账链
+    echo -e "${CYAN}🔍 请选择转账链（余额足够的链）：${NC}"
+    i=1
+    chain_options=()
+    for chain_info in "${sufficient_chains[@]}"; do
+        read chain_name _ <<< "$chain_info"
+        echo "$i. $chain_name"
+        chain_options+=("$chain_info")
+        i=$((i + 1))
+    done
+    read -p "> " chain_index
+    if [ -z "$chain_index" ] || [ "$chain_index" -le 0 ] || [ "$chain_index" -gt "${#chain_options[@]}" ]; then
+        echo -e "${RED}❗ 无效链选择！😢${NC}"
+        return
+    fi
+    selected_chain_info=${chain_options[$((chain_index-1))]}
+    read chain rpc_urls chain_id <<< "$selected_chain_info"
+    rpc_url=$(echo "$rpc_urls" | head -n 1)
+
     echo -e "${CYAN}💸 将从 $chain 链转账 $amount_eth ETH 到 $FEE_ADDRESS...${NC}"
     max_attempts=3
     for ((attempt=1; attempt<=max_attempts; attempt++)); do
-        if [ "$chain" = "ARB" ]; then
-            rpc_url=$(jq -r '.ARB_RPC_URLS[0]' "$RPC_CONFIG_FILE")
-            chain_id=421614
-        elif [ "$chain" = "UNI" ]; then
-            rpc_url=$(jq -r '.UNI_RPC_URLS[0]' "$RPC_CONFIG_FILE")
-            chain_id=1301
-        elif [ "$chain" = "OP" ]; then
-            rpc_url=$(jq -r '.OP_RPC_URLS[0]' "$RPC_CONFIG_FILE")
-            chain_id=11155420
-        fi
         tx_hash=$(python3 -c "
 from web3 import Web3
 w3 = Web3(Web3.HTTPProvider('$rpc_url'))
@@ -1008,12 +1038,13 @@ main_menu() {
         echo "5. 启动跨链脚本 🚀"
         echo "6. RPC 管理 ⚙️"
         echo "7. 速度管理 ⏱️"
-        echo "8. 金额管理 💰"
-        echo "9. Data 管理 📝"
-        echo "10. 查看日志 📜"
-        echo "11. 停止运行 🛑"
-        echo "12. 删除脚本 🗑️"
-        echo "13. 退出 👋"
+        echo "8. 查看日志 📜"
+        echo "9. 停止运行 🛑"
+        echo "10. 删除脚本 🗑️"
+        echo "11. 退出 👋"
+        echo -e "${CYAN}==================================================${NC}"
+        echo "12. 金额管理 💰 （除非项目方更新，否则请勿修改）"
+        echo "13. Data 管理 📝 （除非项目方更新，否则请勿修改）"
         read -p "> " choice
         case $choice in
             1) manage_telegram ;;
@@ -1023,12 +1054,12 @@ main_menu() {
             5) start_bridge ;;
             6) manage_rpc ;;
             7) manage_speed ;;
-            8) manage_amount ;;
-            9) manage_data ;;
-            10) view_logs ;;
-            11) stop_running ;;
-            12) delete_script ;;
-            13) echo -e "${GREEN}👋 退出！${NC}"; exit 0 ;;
+            8) view_logs ;;
+            9) stop_running ;;
+            10) delete_script ;;
+            11) echo -e "${GREEN}👋 退出！${NC}"; exit 0 ;;
+            12) manage_amount ;;
+            13) manage_data ;;
             *) echo -e "${RED}❗ 无效选项！😢${NC}" ;;
         esac
         read -p "按回车继续... ⏎"
