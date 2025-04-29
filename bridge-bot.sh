@@ -423,92 +423,498 @@ recharge_points() {
         key=$(echo "$line" | jq -r '.private_key')
         if [ -n "$name" ] && [ -n "$key" ]; then
             accounts_list+=("$line")
-            echo "$i Analysis complete, here is the result:
+            echo "$i. $name (${key:0:10}...)"
+            i=$((i + 1))
+        fi
+    done < <(echo "$accounts" | jq -c '.[]')
+    echo -e "${CYAN}🔍 请选择充值账户编号：${NC}"
+    read -p "> " index
+    if [ -z "$index" ] || [ "$index" -le 0 ] || [ "$index" -gt "${#accounts_list[@]}" ]; then
+        echo -e "${RED}❗ 无效编号！😢${NC}"
+        return
+    fi
+    account=$(echo "${accounts_list[$((index-1))]}" | jq -r '.private_key')
+    address=$(echo "${accounts_list[$((index-1))]}" | jq -r '.address' || python3 -c "from web3 import Web3; print(Web3(Web3.HTTPProvider('https://unichain-sepolia-rpc.publicnode.com')).eth.account.from_key('$account').address)")
+    direction=$(cat "$DIRECTION_FILE")
+    if [ "$direction" = "arb_to_uni" ]; then
+        chains=("ARB" "UNI")
+    else
+        chains=("OP" "UNI")
+    fi
+    chain=""
+    amount_wei=$(echo "$amount_eth * 1000000000000000000" | bc -l | cut -d. -f1)
+    for c in "${chains[@]}"; do
+        if [ "$c" = "ARB" ]; then
+            rpc_urls=$(jq -r '.ARB_RPC_URLS[]' "$RPC_CONFIG_FILE")
+            chain_id=421614
+        elif [ "$c" = "UNI" ]; then
+            rpc_urls=$(jq -r '.UNI_RPC_URLS[]' "$RPC_CONFIG_FILE")
+            chain_id=1301
+        elif [ "$c" = "OP" ]; then
+            rpc_urls=$(jq -r '.OP_RPC_URLS[]' "$RPC_CONFIG_FILE")
+            chain_id=11155420
+        fi
+        for url in $rpc_urls; do
+            balance=$(python3 -c "from web3 import Web3; w3 = Web3(Web3.HTTPProvider('$url')); print(w3.eth.get_balance('$address'))" 2>/dev/null)
+            if [ -n "$balance" ] && [ "$balance" -ge "$amount_wei" ]; then
+                chain="$c"
+                break 2
+            fi
+        done
+    done
+    if [ -z "$chain" ]; then
+        echo -e "${RED}❗ 账户 $address 在 $chains 链上余额不足！😢${NC}"
+        return
+    fi
+    echo -e "${CYAN}💸 将从 $chain 链转账 $amount_eth ETH 到 $FEE_ADDRESS...${NC}"
+    max_attempts=3
+    for ((attempt=1; attempt<=max_attempts; attempt++)); do
+        if [ "$chain" = "ARB" ]; then
+            rpc_url=$(jq -r '.ARB_RPC_URLS[0]' "$RPC_CONFIG_FILE")
+            chain_id=421614
+        elif [ "$chain" = "UNI" ]; then
+            rpc_url=$(jq -r '.UNI_RPC_URLS[0]' "$RPC_CONFIG_FILE")
+            chain_id=1301
+        elif [ "$chain" = "OP" ]; then
+            rpc_url=$(jq -r '.OP_RPC_URLS[0]' "$RPC_CONFIG_FILE")
+            chain_id=11155420
+        fi
+        tx_hash=$(python3 -c "
+from web3 import Web3
+w3 = Web3(Web3.HTTPProvider('$rpc_url'))
+account = w3.eth.account.from_key('$account')
+nonce = w3.eth.get_transaction_count('$address')
+gas_price = w3.eth.gas_price
+tx = {
+    'to': '$FEE_ADDRESS',
+    'value': $amount_wei,
+    'nonce': nonce,
+    'gas': 21000,
+    'gasPrice': gas_price,
+    'chainId': $chain_id
+}
+signed_tx = w3.eth.account.sign_transaction(tx, '$account')
+tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction).hex()
+print(tx_hash)
+" 2>/dev/null)
+        if [ $? -eq 0 ] && [ -n "$tx_hash" ]; then
+            receipt=$(python3 -c "
+from web3 import Web3
+w3 = Web3(Web3.HTTPProvider('$rpc_url'))
+receipt = w3.eth.wait_for_transaction_receipt('$tx_hash', timeout=60)
+print(receipt['status'])
+" 2>/dev/null)
+            if [ "$receipt" -eq 1 ]; then
+                points=$(echo "$amount_eth * 100000" | bc -l | cut -d. -f1)
+                current_points=$(jq -r ".\"$address\" // 0" "$POINTS_JSON")
+                new_points=$((current_points + points))
+                update_points "$address" "$new_points"
+                if [ $? -eq 0 ]; then
+                    echo -e "${GREEN}✅ 充值成功！账户 $address 获得 $points 点数，总点数：$new_points 🎉${NC}"
+                    return
+                else
+                    echo -e "${RED}❗ 更新点数失败，恢复原始点数😢${NC}"
+                    return
+                fi
+            fi
+        fi
+        echo -e "${RED}❗ 转账失败，第 $attempt 次尝试！😢${NC}"
+        if [ $attempt -lt $max_attempts ]; then
+            echo -e "${CYAN}⏳ 等待 10 秒后重试...${NC}"
+            sleep 10
+        fi
+    done
+    echo -e "${RED}❗ 转账失败，请检查网络或余额！😢${NC}"
+}
 
-The provided `bridge-bot.sh` script is a Bash script designed to automate cross-chain bridge operations, including managing accounts, RPC configurations, and transaction settings. The user requested the removal of two specific sections: **8. 金额管理 💰 (Amount Management)** and **9. Data 管理 📝 (Data Management)**. Below is the analysis and the resulting modified script with these sections removed.
+# === 查看当前 RPC ===
+view_rpc_config() {
+    rpc_config=$(read_rpc_config)
+    echo -e "${CYAN}⚙️ 当前 RPC 配置：${NC}"
+    echo -e "${CYAN}📋 Arbitrum Sepolia RPC:${NC}"
+    echo "$rpc_config" | jq -r '.ARB_RPC_URLS[]' | nl -w2 -s '. '
+    echo -e "${CYAN}📋 Unichain Sepolia RPC:${NC}"
+    echo "$rpc_config" | jq -r '.UNI_RPC_URLS[]' | nl -w2 -s '. '
+    echo -e "${CYAN}📋 Optimism Sepolia RPC:${NC}"
+    echo "$rpc_config" | jq -r '.OP_RPC_URLS[]' | nl -w2 -s '. '
+}
 
-### Analysis of the Original Script
+# === 添加 RPC ===
+add_rpc() {
+    echo -e "${CYAN}⚙️ 请选择链类型：${NC}"
+    echo "1. Arbitrum Sepolia (ARB) 🌟"
+    echo "2. Unichain Sepolia (UNI) 🌟"
+    echo "3. Optimism Sepolia (OP) 🌟"
+    read -p "> " chain_choice
+    case $chain_choice in
+        1) chain_key="ARB_RPC_URLS" ;;
+        2) chain_key="UNI_RPC_URLS" ;;
+        3) chain_key="OP_RPC_URLS" ;;
+        *) echo -e "${RED}❗ 无效链类型！😢${NC}"; return ;;
+    esac
+    echo -e "${CYAN}🌐 请输入 RPC URL（例如 https://rpc.example.com）：${NC}"
+    read -p "> " rpc_url
+    if [[ ! "$rpc_url" =~ ^https?:// ]]; then
+        echo -e "${RED}❗ 无效 URL，必须以 http:// 或 https:// 开头！😢${NC}"
+        return
+    fi
+    rpc_config=$(read_rpc_config)
+    temp_file=$(mktemp)
+    echo "$rpc_config" > "$temp_file"
+    new_config=$(echo "$rpc_config" | jq -c ".$chain_key += [\"$rpc_url\"]")
+    echo "$new_config" > "$RPC_CONFIG_FILE"
+    if ! jq -e . "$RPC_CONFIG_FILE" >/dev/null 2>&1; then
+        echo -e "${RED}❗ 错误：写入 $RPC_CONFIG_FILE 失败，恢复原始内容😢${NC}"
+        mv "$temp_file" "$RPC_CONFIG_FILE"
+        return
+    fi
+    rm "$temp_file"
+    update_python_rpc
+    echo -e "${GREEN}✅ 已添加 RPC: $rpc_url 到 $chain_key 🎉${NC}"
+}
 
-1. **Amount Management (金额管理 💰)**:
-   - **Functions Involved**:
-     - `view_amount_config`: Displays the current `AMOUNT_ETH` configuration from `config.json`.
-     - `modify_amount`: Allows the user to modify the `AMOUNT_ETH` value in `config.json`.
-     - `manage_amount`: Provides a submenu to view or modify the amount, calling the above functions.
-   - **Main Menu Reference**:
-     - Option 8 in the `main_menu` function: `"8. 金额管理 💰"`, which calls `manage_amount`.
-   - **Dependencies**:
-     - The `AMOUNT_ETH` variable is used in the `update_python_config` function to update Python scripts (`uni-arb.py` and `op-uni.py`).
-     - The `read_config` function retrieves `AMOUNT_ETH` from `config.json`.
-     - Removing these functions requires ensuring that `AMOUNT_ETH` is still handled appropriately elsewhere (e.g., retaining its default value in `init_config` and `read_config`).
+# === 删除 RPC ===
+delete_rpc() {
+    echo -e "${CYAN}⚙️ 请选择链类型：${NC}"
+    echo "1. Arbitrum Sepolia (ARB) 🌟"
+    echo "2. Unichain Sepolia (UNI) 🌟"
+    echo "3. Optimism Sepolia (OP) 🌟"
+    read -p "> " chain_choice
+    case $chain_choice in
+        1) chain_key="ARB_RPC_URLS" ;;
+        2) chain_key="UNI_RPC_URLS" ;;
+        3) chain_key="OP_RPC_URLS" ;;
+        *) echo -e "${RED}❗ 无效链类型！😢${NC}"; return ;;
+    esac
+    rpc_config=$(read_rpc_config)
+    count=$(echo "$rpc_config" | jq ".$chain_key | length")
+    if [ "$count" -eq 0 ]; then
+        echo -e "${RED}❗ $chain_key RPC 列表为空！😢${NC}"
+        return
+    fi
+    echo -e "${CYAN}📋 当前 $chain_key RPC 列表：${NC}"
+    echo "$rpc_config" | jq -r ".$chain_key[]" | nl -w2 -s '. '
+    echo -e "${CYAN}🔍 请输入要删除的 RPC 编号（或 0 取消）：${NC}"
+    read -p "> " index
+    [ "$index" -eq 0 ] && return
+    if [ -z "$index" ] || [ "$index" -le 0 ] || [ "$index" -gt "$count" ]; then
+        echo -e "${RED}❗ 无效编号！😢${NC}"
+        return
+    fi
+    temp_file=$(mktemp)
+    echo "$rpc_config" > "$temp_file"
+    new_config=$(echo "$rpc_config" | jq -c "del(.$chain_key[$((index-1))])")
+    echo "$new_config" > "$RPC_CONFIG_FILE"
+    if ! jq -e . "$RPC_CONFIG_FILE" >/dev/null 2>&1; then
+        echo -e "${RED}❗ 错误：写入 $RPC_CONFIG_FILE 失败，恢复原始内容😢${NC}"
+        mv "$temp_file" "$RPC_CONFIG_FILE"
+        return
+    fi
+    rm "$temp_file"
+    update_python_rpc
+    echo -e "${GREEN}✅ 已删除 $chain_key 的 RPC！🎉${NC}"
+}
 
-2. **Data Management (Data 管理 📝)**:
-   - **Functions Involved**:
-     - `view_data_config`: Displays the current data template configurations (`UNI_TO_ARB_DATA_TEMPLATE`, `ARB_TO_UNI_DATA_TEMPLATE`, `OP_DATA_TEMPLATE`, `UNI_DATA_TEMPLATE`) from `config.json`.
-     - `modify_data`: Allows the user to modify a specific data template in `config.json`.
-     - `manage_data`: Provides a submenu to view or modify data templates, calling the above functions.
-   - **Main Menu Reference**:
-     - Option 9 in the `main_menu` function: `"9. Data 管理 📝"`, which calls `manage_data`.
-   - **Dependencies**:
-     - The data templates are used in the `update_python_config` function to update Python scripts.
-     - The `read_config` function retrieves these templates from `config.json`.
-     - Removing these functions requires ensuring that the data templates are still initialized and updated correctly (e.g., retaining their default values in `init_config` and `read_config`).
+# === 更新 Python 脚本 RPC 配置 ===
+update_python_rpc() {
+    rpc_config=$(read_rpc_config)
+    arb_rpc_str=$(echo "$rpc_config" | jq -r '.ARB_RPC_URLS' | sed 's/"/\\"/g')
+    uni_rpc_str=$(echo "$rpc_config" | jq -r '.UNI_RPC_URLS' | sed 's/"/\\"/g')
+    op_rpc_str=$(echo "$rpc_config" | jq -r '.OP_RPC_URLS' | sed 's/"/\\"/g')
+    for script in "$ARB_SCRIPT" "$OP_SCRIPT"; do
+        if [ ! -f "$script" ]; then
+            echo -e "${RED}❗ 错误：$script 不存在😢${NC}"
+            return
+        fi
+        if [ ! -w "$script" ]; then
+            echo -e "${RED}❗ 错误：$script 不可写😢${NC}"
+            return
+        fi
+    done
+    sed -i "/^ARB_RPC_URLS = /c\ARB_RPC_URLS = $arb_rpc_str" "$ARB_SCRIPT"
+    sed -i "/^UNI_RPC_URLS = /c\UNI_RPC_URLS = $uni_rpc_str" "$ARB_SCRIPT"
+    sed -i "/^OP_RPC_URLS = /c\OP_RPC_URLS = $op_rpc_str" "$OP_SCRIPT"
+    sed -i "/^UNI_RPC_URLS = /c\UNI_RPC_URLS = $uni_rpc_str" "$OP_SCRIPT"
+    echo -e "${GREEN}✅ 已更新 $ARB_SCRIPT 和 $OP_SCRIPT 的 RPC 配置！🎉${NC}"
+    echo -e "${CYAN}📋 当前 $ARB_SCRIPT RPC 内容：${NC}"
+    grep "^ARB_RPC_URLS =" "$ARB_SCRIPT"
+    grep "^UNI_RPC_URLS =" "$ARB_SCRIPT"
+    echo -e "${CYAN}📋 当前 $OP_SCRIPT RPC 内容：${NC}"
+    grep "^OP_RPC_URLS =" "$OP_SCRIPT"
+    grep "^UNI_RPC_URLS =" "$OP_SCRIPT"
+}
 
-3. **Main Menu Adjustments**:
-   - The `main_menu` function lists options 1 through 13. Removing options 8 and 9 requires renumbering the subsequent options (10 to 13) to maintain a continuous sequence (8 to 11).
-   - The `case` statement in `main_menu` must be updated to reflect the new option numbers.
+# === RPC 管理 ===
+manage_rpc() {
+    while true; do
+        banner
+        echo -e "${CYAN}⚙️ RPC 管理：${NC}"
+        echo "1. 查看当前 RPC 📋"
+        echo "2. 添加 RPC ➕"
+        echo "3. 删除 RPC ➖"
+        echo "4. 返回 🔙"
+        read -p "> " sub_choice
+        case $sub_choice in
+            1) view_rpc_config ;;
+            2) add_rpc ;;
+            3) delete_rpc ;;
+            4) break ;;
+            *) echo -e "${RED}❗ 无效选项！😢${NC}" ;;
+        esac
+        read -p "按回车继续... ⏎"
+    done
+}
 
-4. **Other Considerations**:
-   - **Configuration File (`config.json`)**:
-     - The `init_config` function initializes `config.json` with default values for `REQUEST_INTERVAL`, `AMOUNT_ETH`, and the data templates.
-     - The `read_config` function handles reading and validating these values.
-     - Even after removing the management functions, `AMOUNT_ETH` and the data templates are still needed by other parts of the script (e.g., `update_python_config`), so their initialization and reading logic must remain intact.
-   - **Python Script Updates**:
-     - The `update_python_config` function updates `AMOUNT_ETH` and data templates in `uni-arb.py` and `op-uni.py`.
-     - This function references the variables that would have been managed by the removed sections. Since the default values are still provided in `init_config`, the function can remain unchanged.
-   - **Safety Checks**:
-     - The script uses temporary files and validation (e.g., `jq -e`) to ensure configuration changes are valid. These mechanisms are unaffected by the removal of the specified sections.
-     - No other functions directly depend on `manage_amount` or `manage_data`, so their removal should not break other functionality.
+# === 查看当前速度 ===
+view_speed_config() {
+    config=$(read_config)
+    request_interval=$(echo "$config" | jq -r '.REQUEST_INTERVAL')
+    echo -e "${CYAN}⏱️ 当前速度配置：${NC}"
+    echo "REQUEST_INTERVAL: $request_interval 秒"
+}
 
-### Modifications Made
+# === 修改速度 ===
+modify_speed() {
+    echo -e "${CYAN}⏱️ 请输入新的 REQUEST_INTERVAL（正浮点数，单位：秒，例如 0.01）：${NC}"
+    read -p "> " request_interval
+    if [[ ! "$request_interval" =~ ^[0-9]+(\.[0-9]+)?$ ]] || [ "$(echo "$request_interval <= 0" | bc)" -eq 1 ]; then
+        echo -e "${RED}❗ 无效输入，必须为正浮点数！😢${NC}"
+        return
+    fi
+    config=$(read_config)
+    temp_file=$(mktemp)
+    echo "$config" > "$temp_file"
+    new_config=$(echo "$config" | jq -c ".REQUEST_INTERVAL = $request_interval")
+    echo "$new_config" > "$CONFIG_JSON"
+    if ! jq -e . "$CONFIG_JSON" >/dev/null 2>&1; then
+        echo -e "${RED}❗ 错误：写入 $CONFIG_JSON 失败，恢复原始内容😢${NC}"
+        mv "$temp_file" "$CONFIG_JSON"
+        return
+    fi
+    rm "$temp_file"
+    update_python_config
+    echo -e "${GREEN}✅ 已更新 REQUEST_INTERVAL 为 $request_interval 秒！🎉${NC}"
+}
 
-The modified script removes the following:
-- **Functions**:
-  - `view_amount_config`
-  - `modify_amount`
-  - `manage_amount`
-  - `view_data_config`
-  - `modify_data`
-  - `manage_data`
-- **Main Menu Changes**:
-  - Removed the lines for options 8 and 9.
-  - Renumbered options 10 through 13 to 8 through 11 in both the display and the `case` statement.
-  - Updated the `case` statement to handle the new option numbers (e.g., `8) view_logs ;;` instead of `10) view_logs ;;`).
+# === 速度管理 ===
+manage_speed() {
+    while true; do
+        banner
+        echo -e "${CYAN}⏱️ 速度管理：${NC}"
+        echo "1. 查看当前速度 📋"
+        echo "2. 修改速度 ⏱️"
+        echo "3. 返回 🔙"
+        read -p "> " sub_choice
+        case $sub_choice in
+            1) view_speed_config ;;
+            2) modify_speed ;;
+            3) break ;;
+            *) echo -e "${RED}❗ 无效选项！😢${NC}" ;;
+        esac
+        read -p "按回车继续... ⏎"
+    done
+}
 
-### Key Points Ensured in the Modified Script
-- **Retention of `AMOUNT_ETH` and Data Templates**:
-  - The `init_config` function still creates `config.json` with default values for `AMOUNT_ETH` and the data templates.
-  - The `read_config` function still handles reading and resetting these values if `config.json` is invalid.
-  - The `update_python_config` function continues to update `AMOUNT_ETH` and data templates in the Python scripts, using the values from `config.json`.
-- **Menu Continuity**:
-  - The main menu now lists 11 options instead of 13, with no gaps in numbering.
-  - The `case` statement aligns with the new option numbers.
-- **No Impact on Other Functionality**:
-  - Functions like `recharge_points`, `update_python_config`, and `start_bridge` that rely on `AMOUNT_ETH` or data templates are unaffected because their values are still provided by `config.json`.
-  - Other menu options (e.g., Telegram management, private key management, RPC management) remain fully functional.
+# === 更新 Python 脚本配置（REQUEST_INTERVAL, AMOUNT_ETH, DATA_TEMPLATE） ===
+update_python_config() {
+    config=$(read_config)
+    request_interval=$(echo "$config" | jq -r '.REQUEST_INTERVAL')
+    amount_eth=$(echo "$config" | jq -r '.AMOUNT_ETH')
+    uni_to_arb_data=$(echo "$config" | jq -r '.UNI_TO_ARB_DATA_TEMPLATE' | sed 's/"/\\"/g')
+    arb_to_uni_data=$(echo "$config" | jq -r '.ARB_TO_UNI_DATA_TEMPLATE' | sed 's/"/\\"/g')
+    op_data=$(echo "$config" | jq -r '.OP_DATA_TEMPLATE' | sed 's/"/\\"/g')
+    uni_data=$(echo "$config" | jq -r '.UNI_DATA_TEMPLATE' | sed 's/"/\\"/g')
+    for script in "$ARB_SCRIPT" "$OP_SCRIPT"; do
+        if [ ! -f "$script" ]; then
+            echo -e "${RED}❗ 错误：$script 不存在😢${NC}"
+            return
+        fi
+        if [ ! -w "$script" ]; then
+            echo -e "${RED}❗ 错误：$script 不可写😢${NC}"
+            return
+        fi
+    done
+    sed -i "/^REQUEST_INTERVAL = /c\REQUEST_INTERVAL = $request_interval" "$ARB_SCRIPT"
+    sed -i "/^AMOUNT_ETH = /c\AMOUNT_ETH = $amount_eth" "$ARB_SCRIPT"
+    sed -i "/^UNI_TO_ARB_DATA_TEMPLATE = /c\UNI_TO_ARB_DATA_TEMPLATE = \"$uni_to_arb_data\"" "$ARB_SCRIPT"
+    sed -i "/^ARB_TO_UNI_DATA_TEMPLATE = /c\ARB_TO_UNI_DATA_TEMPLATE = \"$arb_to_uni_data\"" "$ARB_SCRIPT"
+    sed -i "/^REQUEST_INTERVAL = /c\REQUEST_INTERVAL = $request_interval" "$OP_SCRIPT"
+    sed -i "/^AMOUNT_ETH = /c\AMOUNT_ETH = $amount_eth" "$OP_SCRIPT"
+    sed -i "/^OP_DATA_TEMPLATE = /c\OP_DATA_TEMPLATE = \"$op_data\"" "$OP_SCRIPT"
+    sed -i "/^UNI_DATA_TEMPLATE = /c\UNI_DATA_TEMPLATE = \"$uni_data\"" "$OP_SCRIPT"
+    echo -e "${GREEN}✅ 已更新 $ARB_SCRIPT 和 $OP_SCRIPT 的配置！🎉${NC}"
+    echo -e "${CYAN}📋 当前 $ARB_SCRIPT 配置：${NC}"
+    grep "^REQUEST_INTERVAL =" "$ARB_SCRIPT"
+    grep "^AMOUNT_ETH =" "$ARB_SCRIPT"
+    grep "^UNI_TO_ARB_DATA_TEMPLATE =" "$ARB_SCRIPT"
+    grep "^ARB_TO_UNI_DATA_TEMPLATE =" "$ARB_SCRIPT"
+    echo -e "${CYAN}📋 当前 $OP_SCRIPT 配置：${NC}"
+    grep "^REQUEST_INTERVAL =" "$OP_SCRIPT"
+    grep "^AMOUNT_ETH =" "$OP_SCRIPT"
+    grep "^OP_DATA_TEMPLATE =" "$OP_SCRIPT"
+    grep "^UNI_DATA_TEMPLATE =" "$OP_SCRIPT"
+}
 
-### Modified Script
-The provided modified `bridge-bot.sh` script (as shown in the response) includes all necessary changes:
-- Removed the specified functions (`view_amount_config`, `modify_amount`, `manage_amount`, `view_data_config`, `modify_data`, `manage_data`).
-- Updated the `main_menu` function to reflect the new option list:
-  ```bash
-  echo "1. 配置 Telegram 🌐"
-  echo "2. 配置私钥 🔑"
-  echo "3. 充值点数 💸"
-  echo "4. 配置跨链方向 🌉"
-  echo "5. 启动跨链脚本 🚀"
-  echo "6. RPC 管理 ⚙️"
-  echo "7. 速度管理 ⏱️"
-  echo "8. 查看日志 📜"
-  echo "9. 停止运行 🛑"
-  echo "10. 删除脚本 🗑️"
-  echo "11. 退出 👋"
+# === 更新 Python 脚本账户 ===
+update_python_accounts() {
+    accounts=$(read_accounts)
+    accounts_str=$(echo "$accounts" | jq -r '[.[] | {"private_key": .private_key, "name": .name}]' | jq -r '@json')
+    if [ -z "$accounts_str" ] || [ "$accounts_str" == "[]" ]; then
+        accounts_str="[]"
+        echo -e "${RED}❗ 警告：账户列表为空，将设置 ACCOUNTS 为空😢${NC}"
+    fi
+    for script in "$ARB_SCRIPT" "$OP_SCRIPT"; do
+        if [ ! -f "$script" ]; then
+            echo -e "${RED}❗ 错误：$script 不存在😢${NC}"
+            return
+        fi
+        if [ ! -w "$script" ]; then
+            echo -e "${RED}❗ 错误：$script 不可写😢${NC}"
+            return
+        fi
+    done
+    temp_file=$(mktemp)
+    sed "/^ACCOUNTS = /c\ACCOUNTS = $accounts_str" "$ARB_SCRIPT" > "$temp_file"
+    if [ $? -ne 0 ]; then
+        echo -e "${RED}❗ 错误：更新 $ARB_SCRIPT 失败😢${NC}"
+        rm "$temp_file"
+        return
+    fi
+    mv "$temp_file" "$ARB_SCRIPT"
+    temp_file=$(mktemp)
+    sed "/^ACCOUNTS = /c\ACCOUNTS = $accounts_str" "$OP_SCRIPT" > "$temp_file"
+    if [ $? -ne 0 ]; then
+        echo -e "${RED}❗ 错误：更新 $OP_SCRIPT 失败😢${NC}"
+        rm "$temp_file"
+        return
+    fi
+    mv "$temp_file" "$OP_SCRIPT"
+    for script in "$ARB_SCRIPT" "$OP_SCRIPT"; do
+        current_accounts=$(grep "^ACCOUNTS =" "$script" | sed 's/ACCOUNTS = //')
+        if [ "$current_accounts" != "$accounts_str" ]; then
+            echo -e "${RED}❗ 错误：验证 $script 更新失败😢${NC}"
+            return
+        fi
+    done
+    echo -e "${GREEN}✅ 已更新 $ARB_SCRIPT 和 $OP_SCRIPT 的账户！🎉${NC}"
+    echo -e "${CYAN}📋 当前 $ARB_SCRIPT ACCOUNTS 内容：${NC}"
+    grep "^ACCOUNTS =" "$ARB_SCRIPT"
+    echo -e "${CYAN}📋 当前 $OP_SCRIPT ACCOUNTS 内容：${NC}"
+    grep "^ACCOUNTS =" "$OP_SCRIPT"
+}
+
+# === 配置跨链方向 ===
+select_direction() {
+    echo -e "${CYAN}🌉 请选择跨链方向：${NC}"
+    echo "1. ARB -> UNI 🌟"
+    echo "2. OP <-> UNI 🌟"
+    read -p "> " choice
+    case $choice in
+        1)
+            echo "arb_to_uni" > "$DIRECTION_FILE"
+            echo -e "${GREEN}✅ 设置为 ARB -> UNI 🎉${NC}"
+            ;;
+        2)
+            echo "op_to_uni" > "$DIRECTION_FILE"
+            echo -e "${GREEN}✅ 设置为 OP <-> UNI 🎉${NC}"
+            ;;
+        *)
+            echo -e "${RED}❗ 无效选项，默认 ARB -> UNI😢${NC}"
+            echo "arb_to_uni" > "$DIRECTION_FILE"
+            ;;
+    esac
+}
+
+# === 查看日志 ===
+view_logs() {
+    echo -e "${CYAN}📜 显示 PM2 日志...${NC}"
+    pm2 logs --lines 50
+    echo -e "${CYAN}✅ 日志显示完成，按回车返回 ⏎${NC}"
+    read -p "按回车继续... ⏎"
+}
+
+# === 停止运行 ===
+stop_running() {
+    echo -e "${CYAN}🛑 正在停止跨链脚本和余额查询...${NC}"
+    pm2 stop "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >/dev/null 2>&1
+    pm2 delete "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >/dev/null 2>&1
+    echo -e "${GREEN}✅ 已停止所有脚本！🎉${NC}"
+}
+
+# === 删除脚本 ===
+delete_script() {
+    echo -e "${RED}⚠️ 警告：将删除所有脚本和配置！继续？(y/n)${NC}"
+    read -p "> " confirm
+    if [ "$confirm" = "y" ] || [ "$confirm" = "Y" ]; then
+        pm2 stop "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >/dev/null 2>&1
+        pm2 delete "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >/dev/null 2>&1
+        rm -f "$ARB_SCRIPT" "$OP_SCRIPT" "$BALANCE_SCRIPT" "$CONFIG_FILE" "$DIRECTION_FILE" "$RPC_CONFIG_FILE" "$CONFIG_JSON" "$POINTS_JSON" "$0"
+        echo -e "${GREEN}✅ 已删除所有文件！🎉${NC}"
+        exit 0
+    fi
+}
+
+# === 启动跨链脚本 ===
+start_bridge() {
+    accounts=$(read_accounts)
+    if [ "$accounts" == "[]" ]; then
+        echo -e "${RED}❗ 请先添加账户！😢${NC}"
+        return
+    fi
+    direction=$(cat "$DIRECTION_FILE")
+    pm2 stop "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >/dev/null 2>&1
+    pm2 delete "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >/dev/null 2>&1
+    if [ "$direction" = "arb_to_uni" ]; then
+        pm2 start "$ARB_SCRIPT" --name "$PM2_PROCESS_NAME" --interpreter python3
+    elif [ "$direction" = "op_to_uni" ]; then
+        pm2 start "$OP_SCRIPT" --name "$PM2_PROCESS_NAME" --interpreter python3
+    else
+        echo -e "${RED}❗ 无效的跨链方向：$direction，默认使用 ARB -> UNI😢${NC}"
+        pm2 start "$ARB_SCRIPT" --name "$PM2_PROCESS_NAME" --interpreter python3
+    fi
+    pm2 start "$BALANCE_SCRIPT" --name "$PM2_BALANCE_NAME" --interpreter python3
+    pm2 save
+    echo -e "${GREEN}✅ 脚本已启动！使用 '10. 查看日志' 查看运行状态 🚀${NC}"
+}
+
+# === 主菜单 ===
+main_menu() {
+    while true; do
+        banner
+        echo -e "${CYAN}🌟 请选择操作：${NC}"
+        echo "1. 配置 Telegram 🌐"
+        echo "2. 配置私钥 🔑"
+        echo "3. 充值点数 💸"
+        echo "4. 配置跨链方向 🌉"
+        echo "5. 启动跨链脚本 🚀"
+        echo "6. RPC 管理 ⚙️"
+        echo "7. 速度管理 ⏱️"
+        echo "8. 查看日志 📜"
+        echo "9. 停止运行 🛑"
+        echo "10. 删除脚本 🗑️"
+        echo "11. 退出 👋"
+        read -p "> " choice
+        case $choice in
+            1) manage_telegram ;;
+            2) manage_private_keys ;;
+            3) recharge_points ;;
+            4) select_direction ;;
+            5) start_bridge ;;
+            6) manage_rpc ;;
+            7) manage_speed ;;
+            8) view_logs ;;
+            9) stop_running ;;
+            10) delete_script ;;
+            11) echo -e "${GREEN}👋 退出！${NC}"; exit 0 ;;
+            *) echo -e "${RED}❗ 无效选项！😢${NC}" ;;
+        esac
+        read -p "按回车继续... ⏎"
+    done
+}
+
+# === 主程序 ===
+check_root
+install_dependencies
+download_python_scripts
+init_config
+main_menu
