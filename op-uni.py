@@ -16,16 +16,24 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
 logger = logging.getLogger()
 
 # 从 config.json 加载配置
-with open("config.json", "r") as f:
-    config = json.load(f)
+try:
+    with open("config.json", "r") as f:
+        config = json.load(f)
+except FileNotFoundError:
+    logger.error("config.json 文件不存在")
+    exit(1)
 REQUEST_INTERVAL = config["REQUEST_INTERVAL"]
 AMOUNT_ETH = config["AMOUNT_ETH"]
 OP_DATA_TEMPLATE = config["OP_DATA_TEMPLATE"]
 UNI_DATA_TEMPLATE = config["UNI_DATA_TEMPLATE"]
 
 # 从 rpc_config.json 加载 RPC 配置
-with open("rpc_config.json", "r") as f:
-    rpc_config = json.load(f)
+try:
+    with open("rpc_config.json", "r") as f:
+        rpc_config = json.load(f)
+except FileNotFoundError:
+    logger.error("rpc_config.json 文件不存在")
+    exit(1)
 OP_RPC_URLS = rpc_config["OP_RPC_URLS"]
 UNI_RPC_URLS = rpc_config["UNI_RPC_URLS"]
 
@@ -158,11 +166,15 @@ def bridge_op_to_uni(account_info: Dict) -> bool:
         signed_tx = w3_op.eth.account.sign_transaction(tx, account_info["private_key"])
         tx_hash = w3_op.eth.send_raw_transaction(signed_tx.raw_transaction)
         tx_receipt = w3_op.eth.wait_for_transaction_receipt(tx_hash, timeout=30)
-        success_count += 1
-        total_success_count += 1
-        account_info["op_to_uni_last"] = current_time
-        logger.info(f"{LIGHT_BLUE}{account_info['name']} OP -> UNI 成功{RESET}")
-        return True
+        if tx_receipt['status'] == 1:
+            success_count += 1
+            total_success_count += 1
+            account_info["op_to_uni_last"] = current_time
+            logger.info(f"{LIGHT_BLUE}{account_info['name']} OP -> UNI 成功{RESET}")
+            return True
+        else:
+            logger.error(f"{account_info['name']} OP -> UNI 交易失败")
+            return False
     except Exception as e:
         logger.error(f"{account_info['name']} OP -> UNI 失败: {e}")
         return False
@@ -199,11 +211,15 @@ def bridge_uni_to_op(account_info: Dict) -> bool:
         signed_tx = w3_uni.eth.account.sign_transaction(tx, account_info["private_key"])
         tx_hash = w3_uni.eth.send_raw_transaction(signed_tx.raw_transaction)
         tx_receipt = w3_uni.eth.wait_for_transaction_receipt(tx_hash, timeout=30)
-        success_count += 1
-        total_success_count += 1
-        account_info["uni_to_op_last"] = current_time
-        logger.info(f"{LIGHT_RED}{account_info['name']} UNI -> OP 成功{RESET}")
-        return True
+        if tx_receipt['status'] == 1:
+            success_count += 1
+            total_success_count += 1
+            account_info["uni_to_op_last"] = current_time
+            logger.info(f"{LIGHT_RED}{account_info['name']} UNI -> OP 成功{RESET}")
+            return True
+        else:
+            logger.error(f"{account_info['name']} UNI -> OP 交易失败")
+            return False
     except Exception as e:
         logger.error(f"{account_info['name']} UNI -> OP 失败: {e}")
         return False
@@ -215,6 +231,7 @@ def process_account(account_info: Dict):
         if direction == "op_to_uni":
             bridge_op_to_uni(account_info)
             bridge_uni_to_op(account_info)
+        time.sleep(REQUEST_INTERVAL)
 
 # 主函数
 def main():
@@ -226,4 +243,9 @@ def main():
         executor.map(process_account, accounts)
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        logger.info("程序终止")
+    except Exception as e:
+        logger.error(f"程序出错: {e}")
