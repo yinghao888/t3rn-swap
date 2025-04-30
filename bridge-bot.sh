@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# 启用调试模式以跟踪执行
+set -x
+
 # === 颜色定义 ===
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -40,7 +43,7 @@ banner() {
 # === 检查 root 权限 ===
 check_root() {
     if [ "$EUID" -ne 0 ]; then
-        echo -e "${RED}❗ 错误：请以 root 权限运行此脚本（使用 sudo）！😢${NC}"
+        echo -e "${RED}❗ 错误：请以 root 权限运行此脚本（使用 sudo）！😢${NC}" >&2
         exit 1
     fi
 }
@@ -48,11 +51,11 @@ check_root() {
 # === 安装依赖 ===
 install_dependencies() {
     echo -e "${CYAN}🔍 正在检查和安装必要的依赖...🛠️${NC}"
-    apt-get update -y || { echo -e "${RED}❗ 无法更新包列表😢${NC}"; exit 1; }
+    apt-get update -y || { echo -e "${RED}❗ 无法更新包列表😢${NC}" >&2; exit 1; }
     for pkg in curl wget jq python3 python3-pip python3-dev python3-venv bc coreutils pipx; do
         if ! dpkg -l | grep -q "^ii.*$pkg "; then
             echo -e "${CYAN}📦 安装 $pkg...🚚${NC}"
-            apt-get install -y "$pkg" || { echo -e "${RED}❗ 无法安装 $pkg😢${NC}"; exit 1; }
+            apt-get install -y "$pkg" || { echo -e "${RED}❗ 无法安装 $pkg😢${NC}" >&2; exit 1; }
         else
             echo -e "${GREEN}✅ $pkg 已安装🎉${NC}"
         fi
@@ -61,8 +64,8 @@ install_dependencies() {
         echo -e "${CYAN}🐍 安装 Python ${PYTHON_VERSION}...📥${NC}"
         apt-get install -y software-properties-common && add-apt-repository ppa:deadsnakes/ppa -y && apt-get update -y
         apt-get install -y python${PYTHON_VERSION} python${PYTHON_VERSION}-dev python${PYTHON_VERSION}-distutils || {
-            echo -e "${RED}❗ 无法安装 Python ${PYTHON_VERSION}，使用默认 Python😢${NC}"
-            command -v python3 >/dev/null 2>&1 || { echo -e "${RED}❗ 无可用 Python😢${NC}"; exit 1; }
+            echo -e "${RED}❗ 无法安装 Python ${PYTHON_VERSION}，使用默认 Python😢${NC}" >&2
+            command -v python3 >/dev/null 2>&1 || { echo -e "${RED}❗ 无可用 Python😢${NC}" >&2; exit 1; }
         }
         curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py
         python${PYTHON_VERSION} get-pip.py && rm get-pip.py
@@ -70,29 +73,29 @@ install_dependencies() {
     if ! command -v pm2 >/dev/null 2>&1; then
         echo -e "${CYAN}🌐 安装 Node.js 和 PM2...📥${NC}"
         curl -sL https://deb.nodesource.com/setup_16.x | bash -
-        apt-get install -y nodejs && npm install -g pm2 || { echo -e "${RED}❗ 无法安装 PM2😢${NC}"; exit 1; }
+        apt-get install -y nodejs && npm install -g pm2 || { echo -e "${RED}❗ 无法安装 PM2😢${NC}" >&2; exit 1; }
     fi
 
     # 创建虚拟环境并安装库
     if [ ! -d "$VENV_PATH" ]; then
         echo -e "${CYAN}📦 创建虚拟环境...🚚${NC}"
-        python3 -m venv "$VENV_PATH" || { echo -e "${RED}❗ 无法创建虚拟环境，请检查 Python 环境和权限😢${NC}"; exit 1; }
+        python3 -m venv "$VENV_PATH" || { echo -e "${RED}❗ 无法创建虚拟环境，请检查 Python 环境和权限😢${NC}" >&2; exit 1; }
     fi
 
     # 检查虚拟环境是否创建成功
     if [ ! -f "$VENV_PATH/bin/activate" ]; then
-        echo -e "${RED}❗ 虚拟环境激活文件 $VENV_PATH/bin/activate 不存在，创建失败😢${NC}"
+        echo -e "${RED}❗ 虚拟环境激活文件 $VENV_PATH/bin/activate 不存在，创建失败😢${NC}" >&2
         exit 1
     fi
 
     # 激活虚拟环境
-    source "$VENV_PATH/bin/activate" || { echo -e "${RED}❗ 无法激活虚拟环境 $VENV_PATH/bin/activate😢${NC}"; exit 1; }
+    source "$VENV_PATH/bin/activate" || { echo -e "${RED}❗ 无法激活虚拟环境 $VENV_PATH/bin/activate😢${NC}" >&2; exit 1; }
 
     # 安装 Python 依赖
     for py_pkg in web3 cryptography; do
         if ! "$VENV_PATH/bin/pip" show "$py_pkg" >/dev/null 2>&1; then
             echo -e "${CYAN}📦 安装 $py_pkg（虚拟环境）...🚚${NC}"
-            "$VENV_PATH/bin/pip" install "$py_pkg" || { echo -e "${RED}❗ 无法安装 $py_pkg😢${NC}"; deactivate; exit 1; }
+            "$VENV_PATH/bin/pip" install "$py_pkg" || { echo -e "${RED}❗ 无法安装 $py_pkg😢${NC}" >&2; deactivate; exit 1; }
         else
             echo -e "${GREEN}✅ $py_pkg 已安装（虚拟环境）🎉${NC}"
         fi
@@ -102,13 +105,13 @@ install_dependencies() {
     # 使用 pipx 安装应用
     if ! pipx list | grep -q "python-telegram-bot"; then
         echo -e "${CYAN}📦 安装 python-telegram-bot...🚚${NC}"
-        pipx install python-telegram-bot || { echo -e "${RED}❗ 无法安装 python-telegram-bot😢${NC}"; exit 1; }
+        pipx install python-telegram-bot || { echo -e "${RED}❗ 无法安装 python-telegram-bot😢${NC}" >&2; exit 1; }
     else
         echo -e "${GREEN}✅ python-telegram-bot 已安装🎉${NC}"
     fi
 
     if ! command -v sha256sum >/dev/null 2>&1; then
-        echo -e "${RED}❗ sha256sum 命令不可用，请确保 coreutils 已安装😢${NC}"
+        echo -e "${RED}❗ sha256sum 命令不可用，请确保 coreutils 已安装😢${NC}" >&2
         exit 1
     fi
     echo -e "${GREEN}✅ 依赖安装完成！🎉${NC}"
@@ -119,7 +122,7 @@ download_python_scripts() {
     echo -e "${CYAN}📥 下载 Python 脚本...🚀${NC}"
     for script in "$ARB_SCRIPT" "$OP_SCRIPT" "$BALANCE_SCRIPT"; do
         if [ ! -f "$script" ]; then
-            wget -O "$script" "https://raw.githubusercontent.com/yinghao888/t3rn-swap/main/$script" || { echo -e "${RED}❗ 无法下载 $script😢${NC}"; exit 1; }
+            wget -O "$script" "https://raw.githubusercontent.com/yinghao888/t3rn-swap/main/$script" || { echo -e "${RED}❗ 无法下载 $script😢${NC}" >&2; exit 1; }
             chmod +x "$script"
             echo -e "${GREEN}✅ $script 下载完成🎉${NC}"
         else
@@ -151,7 +154,7 @@ init_config() {
     if [ ! -f "$POINTS_JSON" ]; then
         echo '{}' > "$POINTS_JSON" && echo -e "${GREEN}✅ 创建 $POINTS_JSON 💸${NC}"
         sha256sum "$POINTS_JSON" > "$POINTS_HASH_FILE" 2>/dev/null || {
-            echo -e "${RED}❗ 无法创建 $POINTS_HASH_FILE，请检查写入权限😢${NC}"
+            echo -e "${RED}❗ 无法创建 $POINTS_HASH_FILE，请检查写入权限😢${NC}" >&2
             exit 1
         }
         echo -e "${GREEN}✅ 创建 $POINTS_HASH_FILE 🎉${NC}"
@@ -161,10 +164,10 @@ init_config() {
 # === 验证点数文件完整性 ===
 validate_points_file() {
     if [ ! -f "$POINTS_JSON" ] || [ ! -f "$POINTS_HASH_FILE" ]; then
-        echo -e "${RED}❗ 点数文件或哈希文件缺失！尝试重新创建...😢${NC}"
+        echo -e "${RED}❗ 点数文件或哈希文件缺失！尝试重新创建...😢${NC}" >&2
         echo '{}' > "$POINTS_JSON"
         sha256sum "$POINTS_JSON" > "$POINTS_HASH_FILE" 2>/dev/null || {
-            echo -e "${RED}❗ 无法创建 $POINTS_HASH_FILE，请检查写入权限😢${NC}"
+            echo -e "${RED}❗ 无法创建 $POINTS_HASH_FILE，请检查写入权限😢${NC}" >&2
             exit 1
         }
         echo -e "${GREEN}✅ 点数文件已重新创建🎉${NC}"
@@ -172,7 +175,7 @@ validate_points_file() {
     current_hash=$(sha256sum "$POINTS_JSON" | awk '{print $1}')
     stored_hash=$(awk '{print $1}' "$POINTS_HASH_FILE")
     if [ "$current_hash" != "$stored_hash" ]; then
-        echo -e "${RED}❗ 点数文件被篡改！😢${NC}"
+        echo -e "${RED}❗ 点数文件被篡改！😢${NC}" >&2
         send_telegram_notification "点数文件被篡改，脚本退出！"
         exit 1
     fi
@@ -185,7 +188,7 @@ read_accounts() {
         return
     fi
     if ! jq -e . "$CONFIG_FILE" >/dev/null 2>&1; then
-        echo -e "${RED}❗ 警告：$CONFIG_FILE 格式无效，重置为空列表😢${NC}"
+        echo -e "${RED}❗ 警告：$CONFIG_FILE 格式无效，重置为空列表😢${NC}" >&2
         echo '[]' > "$CONFIG_FILE"
         echo '[]'
         return
@@ -200,7 +203,7 @@ read_config() {
         return
     fi
     if ! jq -e . "$CONFIG_JSON" >/dev/null 2>&1; then
-        echo -e "${RED}❗ 警告：$CONFIG_JSON 格式无效，重置为默认配置😢${NC}"
+        echo -e "${RED}❗ 警告：$CONFIG_JSON 格式无效，重置为默认配置😢${NC}" >&2
         echo '{
             "REQUEST_INTERVAL": 0.5,
             "AMOUNT_ETH": 1,
@@ -222,7 +225,7 @@ read_rpc_config() {
         return
     fi
     if ! jq -e . "$RPC_CONFIG_FILE" >/dev/null 2>&1; then
-        echo -e "${RED}❗ 警告：$RPC_CONFIG_FILE 格式无效，重置为默认配置😢${NC}"
+        echo -e "${RED}❗ 警告：$RPC_CONFIG_FILE 格式无效，重置为默认配置😢${NC}" >&2
         echo '{
             "ARB_API_URLS": ["https://api-sepolia.arbiscan.io/api"],
             "ARB_RPC_URLS": ["https://sepolia-rollup.arbitrum.io/rpc", "https://endpoints.omniatech.io/v1/arbitrum/sepolia/public"],
@@ -253,13 +256,13 @@ update_points() {
     new_points=$(echo "$points_json" | jq -c ".\"$address\" = $points")
     echo "$new_points" > "$POINTS_JSON"
     if ! jq -e . "$POINTS_JSON" >/dev/null 2>&1; then
-        echo -e "${RED}❗ 错误：写入 $POINTS_JSON 失败，恢复原始内容😢${NC}"
+        echo -e "${RED}❗ 错误：写入 $POINTS_JSON 失败，恢复原始内容😢${NC}" >&2
         mv "$temp_file" "$POINTS_JSON"
         rm -f "$temp_file"
         return 1
     fi
     sha256sum "$POINTS_JSON" > "$POINTS_HASH_FILE" 2>/dev/null || {
-        echo -e "${RED}❗ 无法更新 $POINTS_HASH_FILE，请检查写入权限😢${NC}"
+        echo -e "${RED}❗ 无法更新 $POINTS_HASH_FILE，请检查写入权限😢${NC}" >&2
         mv "$temp_file" "$POINTS_JSON"
         rm -f "$temp_file"
         return 1
@@ -275,7 +278,7 @@ check_account_points() {
     points_json=$(read_points)
     current_points=$(echo "$points_json" | jq -r ".\"$address\" // 0")
     if [ "$current_points" -lt "$required_points" ]; then
-        echo -e "${RED}❗ 账户 $address 点数不足（当前：$current_points，需：$required_points）😢${NC}"
+        echo -e "${RED}❗ 账户 $address 点数不足（当前：$current_points，需：$required_points）😢${NC}" >&2
         send_telegram_notification "账户 $address 点数不足（当前：$current_points，需：$required_points），请充值！"
         return 1
     fi
@@ -286,7 +289,7 @@ check_account_points() {
 send_telegram_notification() {
     local message="$1"
     if [ -z "$TELEGRAM_CHAT_ID" ]; then
-        echo -e "${RED}❗ Telegram Chat ID 未配置，请在菜单中设置！😢${NC}"
+        echo -e "${RED}❗ Telegram Chat ID 未配置，请在菜单中设置！😢${NC}" >&2
         return 1
     fi
     local encoded_message=$(echo -n "$message" | jq -sRr @uri)
@@ -296,7 +299,7 @@ send_telegram_notification() {
     if [ $? -eq 0 ]; then
         echo -e "${GREEN}✅ Telegram 通知已发送🎉${NC}"
     else
-        echo -e "${RED}❗ Telegram 通知发送失败😢${NC}"
+        echo -e "${RED}❗ Telegram 通知发送失败😢${NC}" >&2
     fi
 }
 
@@ -350,17 +353,17 @@ add_private_key() {
         key=$(echo "$key" | tr -d '[:space:]')
         key=${key#0x}
         if [[ ! "$key" =~ ^[0-9a-fA-F]{64}$ ]]; then
-            echo -e "${RED}❗ 无效私钥：${key:0:10}...（需 64 位十六进制）😢${NC}"
+            echo -e "${RED}❗ 无效私钥：${key:0:10}...（需 64 位十六进制）😢${NC}" >&2
             continue
         fi
         formatted_key="0x$key"
         if echo "$accounts" | jq -e ".[] | select(.private_key == \"$formatted_key\")" >/dev/null 2>&1; then
-            echo -e "${RED}❗ 私钥 ${formatted_key:0:10}... 已存在，跳过😢${NC}"
+            echo -e "${RED}❗ 私钥 ${formatted_key:0:10}... 已存在，跳过😢${NC}" >&2
             continue
         fi
         address=$("$VENV_PATH/bin/python3" -c "from web3 import Web3; print(Web3(Web3.HTTPProvider('https://sepolia.unichain.org')).eth.account.from_key('$formatted_key').address)" 2>/dev/null)
         if [ -z "$address" ]; then
-            echo -e "${RED}❗ 无法计算私钥 ${formatted_key:0:10}... 的地址，跳过😢${NC}"
+            echo -e "${RED}❗ 无法计算私钥 ${formatted_key:0:10}... 的地址，跳过😢${NC}" >&2
             continue
         fi
         count=$((count + 1))
@@ -371,7 +374,7 @@ add_private_key() {
     done
     if [ $added -eq 0 ]; then
         rm "$temp_file"
-        echo -e "${RED}❗ 未添加任何新私钥😢${NC}"
+        echo -e "${RED}❗ 未添加任何新私钥😢${NC}" >&2
         return
     fi
     accounts_json=$(echo "$accounts" | jq -c '.')
@@ -380,7 +383,7 @@ add_private_key() {
     done
     echo "$accounts_json" > "$CONFIG_FILE"
     if ! jq -e . "$CONFIG_FILE" >/dev/null 2>&1; then
-        echo -e "${RED}❗ 错误：写入 $CONFIG_FILE 失败，恢复原始内容😢${NC}"
+        echo -e "${RED}❗ 错误：写入 $CONFIG_FILE 失败，恢复原始内容😢${NC}" >&2
         mv "$temp_file" "$CONFIG_FILE"
         rm "$temp_file"
         return
@@ -398,7 +401,7 @@ delete_private_key() {
     accounts=$(read_accounts)
     count=$(echo "$accounts" | jq 'length')
     if [ "$count" -eq 0 ]; then
-        echo -e "${RED}❗ 账户列表为空！😢${NC}"
+        echo -e "${RED}❗ 账户列表为空！😢${NC}" >&2
         return
     fi
     echo -e "${CYAN}📋 当前账户列表：${NC}"
@@ -421,14 +424,14 @@ delete_private_key() {
         fi
     done < <(echo "$accounts" | jq -c '.[]')
     if [ ${#accounts_list[@]} -eq 0 ]; then
-        echo -e "${RED}❗ 账户列表为空！😢${NC}"
+        echo -e "${RED}❗ 账户列表为空！😢${NC}" >&2
         return
     fi
     echo -e "${CYAN}🔍 请输入要删除的账户编号（或 0 取消）：${NC}"
     read -p "> " index
     [ "$index" -eq 0 ] && return
     if [ -z "$index" ] || [ "$index" -le 0 ] || [ "$index" -gt "${#accounts_list[@]}" ]; then
-        echo -e "${RED}❗ 无效编号！😢${NC}"
+        echo -e "${RED}❗ 无效编号！😢${NC}" >&2
         return
     fi
     temp_file=$(mktemp)
@@ -436,7 +439,7 @@ delete_private_key() {
     new_accounts=$(echo "$accounts" | jq -c "del(.[$((index-1))])")
     echo "$new_accounts" > "$CONFIG_FILE"
     if ! jq -e . "$CONFIG_FILE" >/dev/null 2>&1; then
-        echo -e "${RED}❗ 错误：写入 $CONFIG_FILE 失败，恢复原始内容😢${NC}"
+        echo -e "${RED}❗ 错误：写入 $CONFIG_FILE 失败，恢复原始内容😢${NC}" >&2
         mv "$temp_file" "$CONFIG_FILE"
         rm "$temp_file"
         return
@@ -456,7 +459,7 @@ delete_all_private_keys() {
     if [ "$confirm" = "y" ] || [ "$confirm" = "Y" ]; then
         echo '[]' > "$CONFIG_FILE"
         if ! jq -e . "$CONFIG_FILE" >/dev/null 2>&1; then
-            echo -e "${RED}❗ 错误：写入 $CONFIG_FILE 失败😢${NC}"
+            echo -e "${RED}❗ 错误：写入 $CONFIG_FILE 失败😢${NC}" >&2
             return
         fi
         update_python_accounts
@@ -472,7 +475,7 @@ view_private_keys() {
     accounts=$(read_accounts)
     count=$(echo "$accounts" | jq 'length')
     if [ "$count" -eq 0 ]; then
-        echo -e "${RED}❗ 账户列表为空！😢${NC}"
+        echo -e "${RED}❗ 账户列表为空！😢${NC}" >&2
         return
     fi
     echo -e "${CYAN}📋 当前账户列表：${NC}"
@@ -493,7 +496,7 @@ view_private_keys() {
         fi
     done < <(echo "$accounts" | jq -c '.[]')
     if [ $i -eq 1 ]; then
-        echo -e "${RED}❗ 账户列表为空！😢${NC}"
+        echo -e "${RED}❗ 账户列表为空！😢${NC}" >&2
     fi
 }
 
@@ -515,7 +518,7 @@ manage_telegram() {
                 echo -e "${CYAN}📢 请先关注 @GetMyIDBot 获取您的 Telegram ID！😎${NC}"
                 read -p "> " chat_id
                 if [[ ! "$chat_id" =~ ^[0-9]+$ ]]; then
-                    echo -e "${RED}❗ 无效 ID，必须为纯数字！😢${NC}"
+                    echo -e "${RED}❗ 无效 ID，必须为纯数字！😢${NC}" >&2
                     continue
                 fi
                 TELEGRAM_CHAT_ID="$chat_id"
@@ -550,7 +553,7 @@ manage_telegram() {
                 break
                 ;;
             *)
-                echo -e "${RED}❗ 无效选项！😢${NC}"
+                echo -e "${RED}❗ 无效选项！😢${NC}" >&2
                 ;;
         esac
         read -p "按回车继续... ⏎"
@@ -575,7 +578,7 @@ manage_private_keys() {
             3) view_private_keys ;;
             4) break ;;
             5) delete_all_private_keys ;;
-            *) echo -e "${RED}❗ 无效选项！😢${NC}" ;;
+            *) echo -e "${RED}❗ 无效选项！😢${NC}" >&2 ;;
         esac
         read -p "按回车继续... ⏎"
     done
@@ -593,7 +596,7 @@ recharge_points() {
     echo "  - 5,000,000 点（100 ETH）：5折（0.5）"
     read -p "> " amount_eth
     if [[ ! "$amount_eth" =~ ^[0-9]+$ ]] || [ "$amount_eth" -lt 1 ]; then
-        echo -e "${RED}❗ 无效输入，必须为正整数且至少 1 ETH！😢${NC}"
+        echo -e "${RED}❗ 无效输入，必须为正整数且至少 1 ETH！😢${NC}" >&2
         return
     fi
     points=$((amount_eth * 50000))
@@ -612,7 +615,7 @@ recharge_points() {
     accounts=$(read_accounts)
     count=$(echo "$accounts" | jq 'length')
     if [ "$count" -eq 0 ]; then
-        echo -e "${RED}❗ 账户列表为空，请先添加私钥！😢${NC}"
+        echo -e "${RED}❗ 账户列表为空，请先添加私钥！😢${NC}" >&2
         return
     fi
     echo -e "${CYAN}📋 当前账户列表：${NC}"
@@ -625,7 +628,7 @@ recharge_points() {
         if [ -z "$address" ]; then
             address=$("$VENV_PATH/bin/python3" -c "from web3 import Web3; print(Web3(Web3.HTTPProvider('https://sepolia.unichain.org')).eth.account.from_key('$key').address)" 2>/dev/null)
             if [ -z "$address" ]; then
-                echo -e "${RED}❗ 无法计算账户 $name 的地址，跳过😢${NC}"
+                echo -e "${RED}❗ 无法计算账户 $name 的地址，跳过😢${NC}" >&2
                 continue
             fi
             temp_file=$(mktemp)
@@ -633,7 +636,7 @@ recharge_points() {
             accounts_json=$(echo "$accounts" | jq -c ".[] | select(.private_key == \"$key\") |= . + {\"address\": \"$address\"}")
             echo "$accounts_json" > "$CONFIG_FILE"
             if ! jq -e . "$CONFIG_FILE" >/dev/null 2>&1; then
-                echo -e "${RED}❗ 错误：写入 $CONFIG_FILE 失败，恢复原始内容😢${NC}"
+                echo -e "${RED}❗ 错误：写入 $CONFIG_FILE 失败，恢复原始内容😢${NC}" >&2
                 mv "$temp_file" "$CONFIG_FILE"
                 rm "$temp_file"
                 continue
@@ -650,13 +653,13 @@ recharge_points() {
         fi
     done < <(echo "$accounts" | jq -c '.[]')
     if [ ${#accounts_list[@]} -eq 0 ]; then
-        echo -e "${RED}❗ 账户列表为空！😢${NC}"
+        echo -e "${RED}❗ 账户列表为空！😢${NC}" >&2
         return
     fi
     echo -e "${CYAN}🔍 请选择充值账户编号：${NC}"
     read -p "> " index
     if [ -z "$index" ] || [ "$index" -le 0 ] || [ "$index" -gt "${#accounts_list[@]}" ]; then
-        echo -e "${RED}❗ 无效编号！😢${NC}"
+        echo -e "${RED}❗ 无效编号！😢${NC}" >&2
         return
     fi
     account=$(echo "${accounts_list[$((index-1))]}" | jq -r '.private_key')
@@ -664,7 +667,7 @@ recharge_points() {
     if [ -z "$address" ] || [ "$address" == "null" ]; then
         address=$("$VENV_PATH/bin/python3" -c "from web3 import Web3; print(Web3(Web3.HTTPProvider('https://sepolia.unichain.org')).eth.account.from_key('$account').address)" 2>/dev/null)
         if [ -z "$address" ]; then
-            echo -e "${RED}❗ 无法计算账户地址！😢${NC}"
+            echo -e "${RED}❗ 无法计算账户地址！😢${NC}" >&2
             return
         fi
     fi
@@ -782,30 +785,30 @@ EOF
                                 send_telegram_notification "账户 $address 充值成功，获得 $points 点数，总点数：$new_points，交易哈希：$tx_hash"
                                 return
                             else
-                                echo -e "${RED}❗ 更新点数失败，恢复原始点数😢${NC}"
+                                echo -e "${RED}❗ 更新点数失败，恢复原始点数😢${NC}" >&2
                                 send_telegram_notification "账户 $address 充值失败，点数更新失败！"
                                 return
                             fi
                         fi
                     else
-                        echo -e "${RED}❗ 转账失败，第 $attempt 次尝试！错误：$error_message😢${NC}"
+                        echo -e "${RED}❗ 转账失败，第 $attempt 次尝试！错误：$error_message😢${NC}" >&2
                     fi
                     if [ $attempt -lt $max_attempts ]; then
                         echo -e "${CYAN}⏳ 等待 10 秒后重试...${NC}"
                         sleep 10
                     fi
                 done
-                echo -e "${RED}❗ 在 $c 链上转账失败，尝试下一条链...😢${NC}"
+                echo -e "${RED}❗ 在 $c 链上转账失败，尝试下一条链...😢${NC}" >&2
             else
                 error_message=$(echo "$tx_output" | grep '^Check failed' || echo "Unknown error")
-                echo -e "${RED}❗ 在 $c 链上余额不足或检查失败！错误：$error_message😢${NC}"
+                echo -e "${RED}❗ 在 $c 链上余额不足或检查失败！错误：$error_message😢${NC}" >&2
             fi
         done
     done
     op_balance=$(get_account_balance "$address" "OP")
     arb_balance=$(get_account_balance "$address" "ARB")
     uni_balance=$(get_account_balance "$address" "UNI")
-    echo -e "${RED}❗ 所有链上转账失败，请检查网络、余额或 RPC 配置！😢${NC}"
+    echo -e "${RED}❗ 所有链上转账失败，请检查网络、余额或 RPC 配置！😢${NC}" >&2
     echo -e "${CYAN}余额：OP: $op_balance ETH, ARB: $arb_balance ETH, UNI: $uni_balance ETH${NC}"
     send_telegram_notification "账户 $address 充值失败，请检查网络、余额或 RPC 配置！余额：OP: $op_balance ETH, ARB: $arb_balance ETH, UNI: $uni_balance ETH"
 }
@@ -835,12 +838,12 @@ add_rpc() {
         1) chain_key="ARB_RPC_URLS" ;;
         2) chain_key="UNI_RPC_URLS" ;;
         3) chain_key="OP_RPC_URLS" ;;
-        *) echo -e "${RED}❗ 无效链类型！😢${NC}"; return ;;
+        *) echo -e "${RED}❗ 无效链类型！😢${NC}" >&2; return ;;
     esac
     echo -e "${CYAN}🌐 请输入 RPC URL（例如 https://rpc.example.com）：${NC}"
     read -p "> " rpc_url
     if [[ ! "$rpc_url" =~ ^https?:// ]]; then
-        echo -e "${RED}❗ 无效 URL，必须以 http:// 或 https:// 开头！😢${NC}"
+        echo -e "${RED}❗ 无效 URL，必须以 http:// 或 https:// 开头！😢${NC}" >&2
         return
     fi
     rpc_config=$(read_rpc_config)
@@ -849,7 +852,7 @@ add_rpc() {
     new_config=$(echo "$rpc_config" | jq -c ".${chain_key} += [\"$rpc_url\"]")
     echo "$new_config" > "$RPC_CONFIG_FILE"
     if ! jq -e . "$RPC_CONFIG_FILE" >/dev/null 2>&1; then
-        echo -e "${RED}❗ 错误：写入 $RPC_CONFIG_FILE 失败，恢复原始内容😢${NC}"
+        echo -e "${RED}❗ 错误：写入 $RPC_CONFIG_FILE 失败，恢复原始内容😢${NC}" >&2
         mv "$temp_file" "$RPC_CONFIG_FILE"
         rm "$temp_file"
         return
@@ -871,12 +874,12 @@ delete_rpc() {
         1) chain_key="ARB_RPC_URLS" ;;
         2) chain_key="UNI_RPC_URLS" ;;
         3) chain_key="OP_RPC_URLS" ;;
-        *) echo -e "${RED}❗ 无效链类型！😢${NC}"; return ;;
+        *) echo -e "${RED}❗ 无效链类型！😢${NC}" >&2; return ;;
     esac
     rpc_config=$(read_rpc_config)
     count=$(echo "$rpc_config" | jq ".${chain_key} | length")
     if [ "$count" -eq 0 ]; then
-        echo -e "${RED}❗ $chain_key RPC 列表为空！😢${NC}"
+        echo -e "${RED}❗ $chain_key RPC 列表为空！😢${NC}" >&2
         return
     fi
     echo -e "${CYAN}📋 当前 $chain_key RPC 列表：${NC}"
@@ -885,7 +888,7 @@ delete_rpc() {
     read -p "> " index
     [ "$index" -eq 0 ] && return
     if [ -z "$index" ] || [ "$index" -le 0 ] || [ "$index" -gt "$count" ]; then
-        echo -e "${RED}❗ 无效编号！😢${NC}"
+        echo -e "${RED}❗ 无效编号！😢${NC}" >&2
         return
     fi
     temp_file=$(mktemp)
@@ -893,7 +896,7 @@ delete_rpc() {
     new_config=$(echo "$rpc_config" | jq -c "del(.${chain_key}[$((index-1))])")
     echo "$new_config" > "$RPC_CONFIG_FILE"
     if ! jq -e . "$RPC_CONFIG_FILE" >/dev/null 2>&1; then
-        echo -e "${RED}❗ 错误：写入 $RPC_CONFIG_FILE 失败，恢复原始内容😢${NC}"
+        echo -e "${RED}❗ 错误：写入 $RPC_CONFIG_FILE 失败，恢复原始内容😢${NC}" >&2
         mv "$temp_file" "$RPC_CONFIG_FILE"
         rm "$temp_file"
         return
@@ -915,11 +918,11 @@ update_python_rpc() {
     op_rpc_str=$(echo "$rpc_config" | jq -r '.OP_RPC_URLS' | sed 's/"/\\"/g')
     for script in "$ARB_SCRIPT" "$OP_SCRIPT"; do
         if [ ! -f "$script" ]; then
-            echo -e "${RED}❗ 错误：$script 不存在😢${NC}"
+            echo -e "${RED}❗ 错误：$script 不存在😢${NC}" >&2
             return
         fi
         if [ ! -w "$script" ]; then
-            echo -e "${RED}❗ 错误：$script 不可写😢${NC}"
+            echo -e "${RED}❗ 错误：$script 不可写😢${NC}" >&2
             return
         fi
     done
@@ -960,7 +963,7 @@ manage_rpc() {
             2) add_rpc ;;
             3) delete_rpc ;;
             4) break ;;
-            *) echo -e "${RED}❗ 无效选项！😢${NC}" ;;
+            *) echo -e "${RED}❗ 无效选项！😢${NC}" >&2 ;;
         esac
         read -p "按回车继续... ⏎"
     done
@@ -981,7 +984,7 @@ modify_speed() {
     echo -e "${CYAN}⏱️ 请输入新的 REQUEST_INTERVAL（正浮点数，单位：秒，例如 0.01）：${NC}"
     read -p "> " request_interval
     if [[ ! "$request_interval" =~ ^[0-9]+(\.[0-9]+)?$ ]] || [ "$(echo "$request_interval <= 0" | bc)" -eq 1 ]; then
-        echo -e "${RED}❗ 无效输入，必须为正浮点数！😢${NC}"
+        echo -e "${RED}❗ 无效输入，必须为正浮点数！😢${NC}" >&2
         return
     fi
     config=$(read_config)
@@ -990,7 +993,7 @@ modify_speed() {
     new_config=$(echo "$config" | jq -c ".REQUEST_INTERVAL = $request_interval")
     echo "$new_config" > "$CONFIG_JSON"
     if ! jq -e . "$CONFIG_JSON" >/dev/null 2>&1; then
-        echo -e "${RED}❗ 错误：写入 $CONFIG_JSON 失败，恢复原始内容😢${NC}"
+        echo -e "${RED}❗ 错误：写入 $CONFIG_JSON 失败，恢复原始内容😢${NC}" >&2
         mv "$temp_file" "$CONFIG_JSON"
         rm "$temp_file"
         return
@@ -1014,7 +1017,7 @@ manage_speed() {
             1) view_speed_config ;;
             2) modify_speed ;;
             3) break ;;
-            *) echo -e "${RED}❗ 无效选项！😢${NC}" ;;
+            *) echo -e "${RED}❗ 无效选项！😢${NC}" >&2 ;;
         esac
         read -p "按回车继续... ⏎"
     done
@@ -1032,11 +1035,11 @@ update_python_config() {
     uni_data=$(echo "$config" | jq -r '.UNI_DATA_TEMPLATE' | sed "s/'/\\'/g")
     for script in "$ARB_SCRIPT" "$OP_SCRIPT"; do
         if [ ! -f "$script" ]; then
-            echo -e "${RED}❗ 错误：$script 不存在😢${NC}"
+            echo -e "${RED}❗ 错误：$script 不存在😢${NC}" >&2
             return
         fi
         if [ ! -w "$script" ]; then
-            echo -e "${RED}❗ 错误：$script 不可写😢${NC}"
+            echo -e "${RED}❗ 错误：$script 不可写😢${NC}" >&2
             return
         fi
     done
@@ -1068,26 +1071,26 @@ update_python_accounts() {
     accounts_str=$(echo "$accounts" | jq -r '[.[] | {"private_key": .private_key, "name": .name}]' | jq -r '@json')
     if [ -z "$accounts_str" ] || [ "$accounts_str" == "[]" ]; then
         accounts_str="[]"
-        echo -e "${RED}❗ 警告：账户列表为空，将设置 ACCOUNTS 为空😢${NC}"
+        echo -e "${RED}❗ 警告：账户列表为空，将设置 ACCOUNTS 为空😢${NC}" >&2
     fi
     for script in "$ARB_SCRIPT" "$OP_SCRIPT"; do
         if [ ! -f "$script" ]; then
-            echo -e "${RED}❗ 错误：$script 不存在😢${NC}"
+            echo -e "${RED}❗ 错误：$script 不存在😢${NC}" >&2
             return 1
         fi
         if [ ! -w "$script" ]; then
-            echo -e "${RED}❗ 错误：$script 不可写，请检查权限😢${NC}"
+            echo -e "${RED}❗ 错误：$script 不可写，请检查权限😢${NC}" >&2
             return 1
         fi
         temp_file=$(mktemp)
         cp "$script" "$temp_file" || {
-            echo -e "${RED}❗ 错误：无法备份 $script😢${NC}"
+            echo -e "${RED}❗ 错误：无法备份 $script😢${NC}" >&2
             rm -f "$temp_file"
             return 1
         }
         if grep -q "^ACCOUNTS = " "$script"; then
             sed "s|^ACCOUNTS = .*|ACCOUNTS = $accounts_str|" "$script" > "$script.tmp" || {
-                echo -e "${RED}❗ 错误：更新 $script 失败😢${NC}"
+                echo -e "${RED}❗ 错误：更新 $script 失败😢${NC}" >&2
                 mv "$temp_file" "$script"
                 rm -f "$script.tmp"
                 return 1
@@ -1095,14 +1098,14 @@ update_python_accounts() {
         else
             echo "ACCOUNTS = $accounts_str" > "$script.tmp"
             cat "$script" >> "$script.tmp" || {
-                echo -e "${RED}❗ 错误：追加 $script 失败😢${NC}"
+                echo -e "${RED}❗ 错误：追加 $script 失败😢${NC}" >&2
                 mv "$temp_file" "$script"
                 rm -f "$script.tmp"
                 return 1
             }
         fi
         mv "$script.tmp" "$script" || {
-            echo -e "${RED}❗ 错误：移动临时文件到 $script 失败😢${NC}"
+            echo -e "${RED}❗ 错误：移动临时文件到 $script 失败😢${NC}" >&2
             mv "$temp_file" "$script"
             return 1
         }
@@ -1110,7 +1113,7 @@ update_python_accounts() {
         normalized_accounts_str=$(echo "$accounts_str" | tr -d ' \n')
         normalized_current_accounts=$(echo "$current_accounts" | tr -d ' \n')
         if [ "$normalized_current_accounts" != "$normalized_accounts_str" ]; then
-            echo -e "${RED}❗ 错误：验证 $script 更新失败，内容不匹配😢${NC}"
+            echo -e "${RED}❗ 错误：验证 $script 更新失败，内容不匹配😢${NC}" >&2
             echo -e "${CYAN}预期内容：$accounts_str${NC}"
             echo -e "${CYAN}实际内容：$current_accounts${NC}"
             mv "$temp_file" "$script"
@@ -1143,7 +1146,7 @@ select_direction() {
             echo -e "${GREEN}✅ 设置为 OP <-> UNI 🎉${NC}"
             ;;
         *)
-            echo -e "${RED}❗ 无效选项，默认 ARB -> UNI😢${NC}"
+            echo -e "${RED}❗ 无效选项，默认 ARB -> UNI😢${NC}" >&2
             echo "arb_to_uni" > "$DIRECTION_FILE"
             ;;
     esac
@@ -1174,30 +1177,4 @@ delete_script() {
     read -p "> " confirm
     if [ "$confirm" = "y" ] || [ "$confirm" = "Y" ]; then
         pm2 stop "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >/dev/null 2>&1
-        pm2 delete "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >/dev/null 2>&1
-        rm -f "$ARB_SCRIPT" "$OP_SCRIPT" "$BALANCE_SCRIPT" "$CONFIG_FILE" "$DIRECTION_FILE" "$RPC_CONFIG_FILE" "$CONFIG_JSON" "$POINTS_JSON" "$POINTS_HASH_FILE" "$0"
-        echo -e "${GREEN}✅ 已删除所有文件！🎉${NC}"
-        exit 0
-    fi
-}
-
-# === 启动跨链脚本 ===
-start_bridge() {
-    validate_points_file
-    accounts=$(read_accounts)
-    if [ "$accounts" == "[]" ]; then
-        echo -e "${RED}❗ 请先添加账户！😢${NC}"
-        return
-    fi
-    direction=$(cat "$DIRECTION_FILE")
-    script=""
-    case "$direction" in
-        "arb_to_uni") script="$ARB_SCRIPT" ;;
-        "op_to_uni") script="$OP_SCRIPT" ;;
-        *) echo -e "${RED}❗ 无效方向！😢${NC}"; return ;;
-    esac
-    pm2 start "$VENV_PATH/bin/python3" --name "$PM2_PROCESS_NAME" -- "$script" --direction "$direction" >/dev/null 2>&1
-    echo -e "${GREEN}✅ 跨链脚本已启动！🎉${NC}"
-}
-
-# ===
+        pm2 delete "$PM2_PROCESS_NAME"
