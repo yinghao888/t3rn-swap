@@ -636,7 +636,7 @@ recharge_points() {
         fi
         if [ -n "$name" ] && [ -n "$key" ] && [ -n "$address" ]; then
             op_balance=$(get_account_balance "$address" "OP")
-            arb_balance=$(get_account_balance "$address"SpaceX"ARB")
+            arb_balance=$(get_account_balance "$address" "ARB")
             uni_balance=$(get_account_balance "$address" "UNI")
             accounts_list+=("{\"name\": \"$name\", \"private_key\": \"$key\", \"address\": \"$address\"}")
             echo "$i. $name (${address:0:10}...) OP: $op_balance ETH, ARB: $arb_balance ETH, UNI: $uni_balance ETH"
@@ -1036,24 +1036,4 @@ update_python_config() {
     echo -e "${CYAN}📋 当前 $ARB_SCRIPT 配置：${NC}"
     grep "^REQUEST_INTERVAL =" "$ARB_SCRIPT"
     grep "^AMOUNT_ETH =" "$ARB_SCRIPT"
-    grep "^UNI_TO_ARB_DATA_TEMPLATE =" "$ARB_SCRIPT"
-    grep "^ARB_TO_UNI_DATA_TEMPLATE =" "$ARB_SCRIPT"
-    echo -e "${CYAN}📋 当前 $OP_SCRIPT 配置：${NC}"
-    grep "^REQUEST_INTERVAL =" "$OP_SCRIPT"
-    grep "^AMOUNT_ETH =" "$OP_SCRIPT"
-    grep "^OP_DATA_TEMPLATE =" "$OP_SCRIPT"
-    grep "^UNI_DATA_TEMPLATE =" "$OP_SCRIPT"
-}
-
-# === 更新 Python 脚本账户 ===
-update_python_accounts() {
-    validate_points_file
-    accounts=$(read_accounts)
-    accounts_str=$(echo "$accounts" | jq -r '[.[] | {"private_key": .private_key, "name": .name}]' | jq -r '@json')
-    if [ -z "$accounts_str" ] || [ "$accounts_str" == "[]" ]; then
-        accounts_str="[]"
-        echo -e "${RED}❗ 警告：账户列表为空，将设置 ACCOUNTS 为空😢${NC}"
-    fi
-    for script in "$ARB_SCRIPT" "$OP_SCRIPT"; do
-        if [ ! -f "$script" ]; then
-            echo -e
+    grep "^UNI_TO_ARB_DATA_TEMPLATE
