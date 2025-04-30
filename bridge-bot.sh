@@ -650,7 +650,7 @@ recharge_points() {
         fi
     fi
     chains=("ARB" "UNI" "OP")
-    amount_wei=$("$Vstrategies["$VENV_PATH/bin/python3" -c "print(int($discounted_eth * 10**18))")
+    amount_wei=$("$VENV_PATH/bin/python3" -c "print(int($discounted_eth * 10**18))")
     gas_limit=21000
     max_attempts=3
     for c in "${chains[@]}"; do
@@ -1083,51 +1083,4 @@ update_python_accounts() {
             echo -e "${RED}❗ 错误：验证 $script 更新失败，内容不匹配😢${NC}"
             echo -e "${CYAN}预期内容：$accounts_str${NC}"
             echo -e "${CYAN}实际内容：$current_accounts${NC}"
-            mv "$temp_file" "$script"
-            return 1
-        fi
-        rm -f "$temp_file"
-    done
-    echo -e "${GREEN}✅ 已更新 $ARB_SCRIPT 和 $OP_SCRIPT 的账户！🎉${NC}"
-    echo -e "${CYAN}📋 当前 $ARB_SCRIPT ACCOUNTS 内容：${NC}"
-    grep "^ACCOUNTS = " "$ARB_SCRIPT" || echo "ACCOUNTS 未定义"
-    echo -e "${CYAN}📋 当前 $OP_SCRIPT ACCOUNTS 内容：${NC}"
-    grep "^ACCOUNTS = " "$OP_SCRIPT" || echo "ACCOUNTS 未定义"
-}
-
-# === 配置跨链方向 ===
-select_direction() {
-    validate_points_file
-    echo -e "${CYAN}🌉 请选择跨链方向：${NC}"
-    echo "1. ARB -> UNI 🌟"
-    echo "2. OP <-> UNI 🌟"
-    read -p "> " choice
-    case $choice in
-        1)
-            echo "arb_to_uni" > "$DIRECTION_FILE"
-            echo -e "${GREEN}✅ 设置为 ARB -> UNI 🎉${NC}"
-            ;;
-        2)
-            echo "op_to_uni" > "$DIRECTION_FILE"
-            echo -e "${GREEN}✅ 设置为 OP <-> UNI 🎉${NC}"
-            ;;
-        *)
-            echo -e "${RED}❗ 无效选项，默认 ARB -> UNI😢${NC}"
-            echo "arb_to_uni" > "$DIRECTION_FILE"
-            ;;
-    esac
-}
-
-# === 查看日志 ===
-view_logs() {
-    validate_points_file
-    echo -e "${CYAN}📜 显示 PM2 日志...${NC}"
-    pm2 logs --lines 50
-    echo -e "${CYAN}✅ 日志显示完成，按回车返回 ⏎${NC}"
-    read -p "按回车继续... ⏎"
-}
-
-# === 停止运行 ===
-stop_running() {
-    validate_points_file
-    echo -e "${CYAN}🛑
+            mv "$temp_file" "$script
