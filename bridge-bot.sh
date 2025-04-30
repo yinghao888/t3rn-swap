@@ -341,7 +341,7 @@ add_private_key() {
     added=0
     new_accounts=()
     for key in "${keys[@]}"; do
-        key=$(echo "$key" | tr -d '[:space:]')
+        key_media: key=$(echo "$key" | tr -d '[:space:]')
         key=${key#0x}
         if [[ ! "$key" =~ ^[0-9a-fA-F]{64}$ ]]; then
             echo -e "${RED}❗ 无效私钥：${key:0:10}...（需 64 位十六进制）😢${NC}"
@@ -687,8 +687,8 @@ recharge_points() {
             cat << EOF > "$temp_script"
 import sys
 from web3 import Web3
-rpc_url = '$url'
-address = '$address'
+rpc_url = "$url"
+address = "$address"
 amount_eth = $discounted_eth
 gas_limit = $gas_limit
 try:
@@ -716,10 +716,10 @@ EOF
                     cat << EOF > "$temp_script"
 import sys
 from web3 import Web3
-rpc_url = '$url'
-account = '$account'
-address = '$address'
-fee_address = '$FEE_ADDRESS'
+rpc_url = "$url"
+account = "$account"
+address = "$address"
+fee_address = "$FEE_ADDRESS"
 amount_wei = $amount_wei
 chain_id = $chain_id
 gas_limit = $gas_limit
@@ -755,8 +755,8 @@ EOF
                         cat << EOF > "$temp_script"
 import sys
 from web3 import Web3
-rpc_url = '$url'
-tx_hash = '$tx_hash'
+rpc_url = "$url"
+tx_hash = "$tx_hash"
 try:
     w3 = Web3(Web3.HTTPProvider(rpc_url, request_kwargs={'timeout': 10}))
     receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=60)
@@ -1192,6 +1192,53 @@ start_balance_notifier() {
 
 # === 主菜单 ===
 main_menu() {
+    if [ -f telegram.conf ]; then
+        TELEGRAM_CHAT_ID=$(cat telegram.conf)
+    fi
+    check_root
+    install_dependencies
+    download_python_scripts
+    init_config
     while true; do
         banner
-        echo -e "${CYAN}🌟🌟
+        echo -e "${CYAN}🌟🌟 主菜单 🌟🌟${NC}"
+        echo "1. 安装依赖和初始化 📦"
+        echo "2. 管理 Telegram ID 🌐"
+        echo "3. 管理私钥 🔑"
+        echo "4. 充值点数 💸"
+        echo "5. 管理 RPC ⚙️"
+        echo "6. 管理速度 ⏱️"
+        echo "7. 配置跨链方向 🌉"
+        echo "8. 启动跨链脚本 🚀"
+        echo "9. 启动余额查询 📈"
+        echo "10. 查看日志 📜"
+        echo "11. 停止运行 �']);
+        echo "12. 删除脚本和配置 🗑️"
+        echo "13. 退出 🔚"
+        read -p "> " choice
+        case $choice in
+            1)
+                install_dependencies
+                download_python_scripts
+                init_config
+                ;;
+            2) manage_telegram ;;
+            3) manage_private_keys ;;
+            4) recharge_points ;;
+            5) manage_rpc ;;
+            6) manage_speed ;;
+            7) select_direction ;;
+            8) start_bridge ;;
+            9) start_balance_notifier ;;
+            10) view_logs ;;
+            11) stop_running ;;
+            12) delete_script ;;
+            13) exit 0 ;;
+            *) echo -e "${RED}❗ 无效选项！😢${NC}" ;;
+        esac
+        read -p "按回车继续... ⏎"
+    done
+}
+
+# === 启动主菜单 ===
+main_menu
