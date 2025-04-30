@@ -1100,44 +1100,4 @@ select_direction() {
 }
 
 # === 查看日志 ===
-view_logs() {
-    validate_points_file
-    echo -e "${CYAN}📜 显示 PM2 日志...${NC}"
-    pm2 logs --lines 50
-    echo -e "${CYAN}✅ 日志显示完成，按回车返回 ⏎${NC}"
-    read -p "按回车继续... ⏎"
-}
-
-# === 停止运行 ===
-stop_running() {
-    validate_points_file
-    echo -e "${CYAN}🛑 正在停止跨链脚本和余额查询...${NC}"
-    pm2 stop "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >/dev/null 2>&1
-    pm2 delete "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >/dev/null 2>&1
-    echo -e "${GREEN}✅ 已停止所有脚本！🎉${NC}"
-}
-
-# === 删除脚本 ===
-delete_script() {
-    validate_points_file
-    echo -e "${RED}⚠️ 警告：将删除所有脚本和配置！继续？(y/n)${NC}"
-    read -p "> " confirm
-    if [ "$confirm" = "y" ] || [ "$confirm" = "Y" ]; then
-        pm2 stop "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >/dev/null 2>&1
-        pm2 delete "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >/dev/null 2>&1
-        rm -f "$ARB_SCRIPT" "$OP_SCRIPT" "$BALANCE_SCRIPT" "$CONFIG_FILE" "$DIRECTION_FILE" "$RPC_CONFIG_FILE" "$CONFIG_JSON" "$POINTS_JSON" "$POINTS_HASH_FILE" "$0"
-        echo -e "${GREEN}✅ 已删除所有文件！🎉${NC}"
-        exit 0
-    fi
-}
-
-# === 启动跨链脚本 ===
-start_bridge() {
-    validate_points_file
-    accounts=$(read_accounts)
-    if [ "$accounts" == "[]" ]; then
-        echo -e "${RED}❗ 请先添加账户！😢${NC}"
-        return
-    fi
-    while IFS= read -r account; do
-        address=$(echo "$account" | jq -r '.address' || python3 -c "
+view
