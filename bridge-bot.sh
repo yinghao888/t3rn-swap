@@ -133,8 +133,11 @@ init_config() {
     [ ! -f "$CONFIG_FILE" ] && echo '[]' > "$CONFIG_FILE" && echo -e "${GREEN}✅ 创建 $CONFIG_FILE 🎉${NC}"
     [ ! -f "$DIRECTION_FILE" ] && echo "arb_to_uni" > "$DIRECTION_FILE" && echo -e "${GREEN}✅ 默认方向: ARB -> UNI 🌉${NC}"
     [ ! -f "$RPC_CONFIG_FILE" ] && echo '{
+        "ARB_API_URLS": ["https://api-sepolia.arbiscan.io/api"],
         "ARB_RPC_URLS": ["https://sepolia-rollup.arbitrum.io/rpc", "https://endpoints.omniatech.io/v1/arbitrum/sepolia/public"],
+        "UNI_API_URLS": ["https://api-sepolia.uniscan.xyz/api"],
         "UNI_RPC_URLS": ["https://sepolia.unichain.org", "https://unichain-sepolia-rpc.publicnode.com"],
+        "OP_API_URLS": ["https://api-sepolia-optimism.etherscan.io/api"],
         "OP_RPC_URLS": ["https://sepolia.optimism.io", "https://endpoints.omniatech.io/v1/op/sepolia/public", "https://rpc.therpc.io/optimism-sepolia"]
     }' > "$RPC_CONFIG_FILE" && echo -e "${GREEN}✅ 创建 $RPC_CONFIG_FILE ⚙️${NC}"
     [ ! -f "$CONFIG_JSON" ] && echo '{
@@ -221,8 +224,11 @@ read_rpc_config() {
     if ! jq -e . "$RPC_CONFIG_FILE" >/dev/null 2>&1; then
         echo -e "${RED}❗ 警告：$RPC_CONFIG_FILE 格式无效，重置为默认配置😢${NC}"
         echo '{
+            "ARB_API_URLS": ["https://api-sepolia.arbiscan.io/api"],
             "ARB_RPC_URLS": ["https://sepolia-rollup.arbitrum.io/rpc", "https://endpoints.omniatech.io/v1/arbitrum/sepolia/public"],
+            "UNI_API_URLS": ["https://api-sepolia.uniscan.xyz/api"],
             "UNI_RPC_URLS": ["https://sepolia.unichain.org", "https://unichain-sepolia-rpc.publicnode.com"],
+            "OP_API_URLS": ["https://api-sepolia-optimism.etherscan.io/api"],
             "OP_RPC_URLS": ["https://sepolia.optimism.io", "https://endpoints.omniatech.io/v1/op/sepolia/public", "https://rpc.therpc.io/optimism-sepolia"]
         }' > "$RPC_CONFIG_FILE"
         echo '{}'
@@ -341,7 +347,7 @@ add_private_key() {
     added=0
     new_accounts=()
     for key in "${keys[@]}"; do
-        key_media: key=$(echo "$key" | tr -d '[:space:]')
+        key=$(echo "$key" | tr -d '[:space:]')
         key=${key#0x}
         if [[ ! "$key" =~ ^[0-9a-fA-F]{64}$ ]]; then
             echo -e "${RED}❗ 无效私钥：${key:0:10}...（需 64 位十六进制）😢${NC}"
@@ -901,8 +907,11 @@ delete_rpc() {
 update_python_rpc() {
     validate_points_file
     rpc_config=$(read_rpc_config)
+    arb_api_str=$(echo "$rpc_config" | jq -r '.ARB_API_URLS' | sed 's/"/\\"/g')
     arb_rpc_str=$(echo "$rpc_config" | jq -r '.ARB_RPC_URLS' | sed 's/"/\\"/g')
+    uni_api_str=$(echo "$rpc_config" | jq -r '.UNI_API_URLS' | sed 's/"/\\"/g')
     uni_rpc_str=$(echo "$rpc_config" | jq -r '.UNI_RPC_URLS' | sed 's/"/\\"/g')
+    op_api_str=$(echo "$rpc_config" | jq -r '.OP_API_URLS' | sed 's/"/\\"/g')
     op_rpc_str=$(echo "$rpc_config" | jq -r '.OP_RPC_URLS' | sed 's/"/\\"/g')
     for script in "$ARB_SCRIPT" "$OP_SCRIPT"; do
         if [ ! -f "$script" ]; then
@@ -914,16 +923,24 @@ update_python_rpc() {
             return
         fi
     done
+    sed -i "s|^ARB_API_URLS = .*|ARB_API_URLS = $arb_api_str|" "$ARB_SCRIPT"
     sed -i "s|^ARB_RPC_URLS = .*|ARB_RPC_URLS = $arb_rpc_str|" "$ARB_SCRIPT"
+    sed -i "s|^UNI_API_URLS = .*|UNI_API_URLS = $uni_api_str|" "$ARB_SCRIPT"
     sed -i "s|^UNI_RPC_URLS = .*|UNI_RPC_URLS = $uni_rpc_str|" "$ARB_SCRIPT"
+    sed -i "s|^OP_API_URLS = .*|OP_API_URLS = $op_api_str|" "$OP_SCRIPT"
     sed -i "s|^OP_RPC_URLS = .*|OP_RPC_URLS = $op_rpc_str|" "$OP_SCRIPT"
+    sed -i "s|^UNI_API_URLS = .*|UNI_API_URLS = $uni_api_str|" "$OP_SCRIPT"
     sed -i "s|^UNI_RPC_URLS = .*|UNI_RPC_URLS = $uni_rpc_str|" "$OP_SCRIPT"
     echo -e "${GREEN}✅ 已更新 $ARB_SCRIPT 和 $OP_SCRIPT 的 RPC 配置！🎉${NC}"
     echo -e "${CYAN}📋 当前 $ARB_SCRIPT RPC 内容：${NC}"
+    grep "^ARB_API_URLS =" "$ARB_SCRIPT"
     grep "^ARB_RPC_URLS =" "$ARB_SCRIPT"
+    grep "^UNI_API_URLS =" "$ARB_SCRIPT"
     grep "^UNI_RPC_URLS =" "$ARB_SCRIPT"
     echo -e "${CYAN}📋 当前 $OP_SCRIPT RPC 内容：${NC}"
+    grep "^OP_API_URLS =" "$OP_SCRIPT"
     grep "^OP_RPC_URLS =" "$OP_SCRIPT"
+    grep "^UNI_API_URLS =" "$OP_SCRIPT"
     grep "^UNI_RPC_URLS =" "$OP_SCRIPT"
 }
 
@@ -1183,62 +1200,4 @@ start_bridge() {
     echo -e "${GREEN}✅ 跨链脚本已启动！🎉${NC}"
 }
 
-# === 启动余额查询 ===
-start_balance_notifier() {
-    validate_points_file
-    pm2 start "$VENV_PATH/bin/python3" --name "$PM2_BALANCE_NAME" -- "$BALANCE_SCRIPT" --telegram_token "$TELEGRAM_BOT_TOKEN" --telegram_chat_id "$TELEGRAM_CHAT_ID" >/dev/null 2>&1
-    echo -e "${GREEN}✅ 余额查询脚本已启动！🎉${NC}"
-}
-
-# === 主菜单 ===
-main_menu() {
-    if [ -f telegram.conf ]; then
-        TELEGRAM_CHAT_ID=$(cat telegram.conf)
-    fi
-    check_root
-    install_dependencies
-    download_python_scripts
-    init_config
-    while true; do
-        banner
-        echo -e "${CYAN}🌟🌟 主菜单 🌟🌟${NC}"
-        echo "1. 安装依赖和初始化 📦"
-        echo "2. 管理 Telegram ID 🌐"
-        echo "3. 管理私钥 🔑"
-        echo "4. 充值点数 💸"
-        echo "5. 管理 RPC ⚙️"
-        echo "6. 管理速度 ⏱️"
-        echo "7. 配置跨链方向 🌉"
-        echo "8. 启动跨链脚本 🚀"
-        echo "9. 启动余额查询 📈"
-        echo "10. 查看日志 📜"
-        echo "11. 停止运行 �']);
-        echo "12. 删除脚本和配置 🗑️"
-        echo "13. 退出 🔚"
-        read -p "> " choice
-        case $choice in
-            1)
-                install_dependencies
-                download_python_scripts
-                init_config
-                ;;
-            2) manage_telegram ;;
-            3) manage_private_keys ;;
-            4) recharge_points ;;
-            5) manage_rpc ;;
-            6) manage_speed ;;
-            7) select_direction ;;
-            8) start_bridge ;;
-            9) start_balance_notifier ;;
-            10) view_logs ;;
-            11) stop_running ;;
-            12) delete_script ;;
-            13) exit 0 ;;
-            *) echo -e "${RED}❗ 无效选项！😢${NC}" ;;
-        esac
-        read -p "按回车继续... ⏎"
-    done
-}
-
-# === 启动主菜单 ===
-main_menu
+# ===
