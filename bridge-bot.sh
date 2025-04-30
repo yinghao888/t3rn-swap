@@ -1017,42 +1017,4 @@ update_python_config() {
     sed -i "s|^REQUEST_INTERVAL = .*|REQUEST_INTERVAL = $request_interval|" "$OP_SCRIPT"
     sed -i "s|^AMOUNT_ETH = .*|AMOUNT_ETH = $amount_eth|" "$OP_SCRIPT"
     sed -i "s|^OP_DATA_TEMPLATE = .*|OP_DATA_TEMPLATE = \"$op_data\"|" "$OP_SCRIPT"
-    sed -i "s|^UNI_DATA_TEMPLATE = .*|UNI_DATA_TEMPLATE = \"$uni_data\"|" "$OP_SCRIPT"
-    echo -e "${GREEN}✅ 已更新 $ARB_SCRIPT 和 $OP_SCRIPT 的配置！🎉${NC}"
-    echo -e "${CYAN}📋 当前 $ARB_SCRIPT 配置：${NC}"
-    grep "^REQUEST_INTERVAL =" "$ARB_SCRIPT"
-    grep "^AMOUNT_ETH =" "$ARB_SCRIPT"
-    grep "^UNI_TO_ARB_DATA_TEMPLATE =" "$ARB_SCRIPT"
-    grep "^ARB_TO_UNI_DATA_TEMPLATE =" "$ARB_SCRIPT"
-    echo -e "${CYAN}📋 当前 $OP_SCRIPT 配置：${NC}"
-    grep "^REQUEST_INTERVAL =" "$OP_SCRIPT"
-    grep "^AMOUNT_ETH =" "$OP_SCRIPT"
-    grep "^OP_DATA_TEMPLATE =" "$OP_SCRIPT"
-    grep "^UNI_DATA_TEMPLATE =" "$OP_SCRIPT"
-}
-
-# === 更新 Python 脚本账户 ===
-update_python_accounts() {
-    validate_points_file
-    accounts=$(read_accounts)
-    accounts_str=$(echo "$accounts" | jq -r '[.[] | {"private_key": .private_key, "name": .name}]' | jq -r '@json')
-    if [ -z "$accounts_str" ] || [ "$accounts_str" == "[]" ]; then
-        accounts_str="[]"
-        echo -e "${RED}❗ 警告：账户列表为空，将设置 ACCOUNTS 为空😢${NC}"
-    fi
-    for script in "$ARB_SCRIPT" "$OP_SCRIPT"; do
-        if [ ! -f "$script" ]; then
-            echo -e "${RED}❗ 错误：$script 不存在😢${NC}"
-            return 1
-        fi
-        if [ ! -w "$script" ]; then
-            echo -e "${RED}❗ 错误：$script 不可写，请检查权限😢${NC}"
-            return 1
-        fi
-        temp_file=$(mktemp)
-        cp "$script" "$temp_file" || {
-            echo -e "${RED}❗ 错误：无法备份 $script😢${NC}"
-            rm -f "$temp_file"
-            return 1
-        }
-        if
+    sed -i "s|^UNI_DATA_TEMPLATE = .*|UNI_DATA_TEMPLATE = \"$
