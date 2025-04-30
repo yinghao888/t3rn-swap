@@ -1042,45 +1042,4 @@ update_python_accounts() {
     fi
     for script in "$ARB_SCRIPT" "$OP_SCRIPT"; do
         if [ ! -f "$script" ]; then
-            echo -e "${RED}❗ 错误：$script 不存在😢${NC}"
-            return 1
-        fi
-        if [ ! -w "$script" ]; then
-            echo -e "${RED}❗ 错误：$script 不可写，请检查权限😢${NC}"
-            return 1
-        fi
-        temp_file=$(mktemp)
-        cp "$script" "$temp_file" || {
-            echo -e "${RED}❗ 错误：无法备份 $script😢${NC}"
-            rm -f "$temp_file"
-            return 1
-        }
-        if grep -q "^ACCOUNTS = " "$script"; then
-            sed "s|^ACCOUNTS = .*|ACCOUNTS = $accounts_str|" "$script" > "$script.tmp" || {
-                echo -e "${RED}❗ 错误：更新 $script 失败😢${NC}"
-                mv "$temp_file" "$script"
-                rm -f "$script.tmp"
-                return 1
-            }
-        else
-            echo "ACCOUNTS = $accounts_str" > "$script.tmp"
-            cat "$script" >> "$script.tmp" || {
-                echo -e "${RED}❗ 错误：追加 $script 失败😢${NC}"
-                mv "$temp_file" "$script"
-                rm -f "$script.tmp"
-                return 1
-            }
-        fi
-        mv "$script.tmp" "$script" || {
-            echo -e "${RED}❗ 错误：移动临时文件到 $script 失败😢${NC}"
-            mv "$temp_file" "$script"
-            return 1
-        }
-        current_accounts=$(grep "^ACCOUNTS = " "$script" | sed 's/ACCOUNTS = //')
-        normalized_accounts_str=$(echo "$accounts_str" | tr -d ' \n')
-        normalized_current_accounts=$(echo "$current_accounts" | tr -d ' \n')
-        if [ "$normalized_current_accounts" != "$normalized_accounts_str" ]; then
-            echo -e "${RED}❗ 错误：验证 $script 更新失败，内容不匹配😢${NC}"
-            echo -e "${CYAN}预期内容：$accounts_str${NC}"
-            echo -e "${CYAN}实际内容：$current_accounts${NC}"
-            mv "$temp_file" "$script
+            echo -e "${RED}❗ 错误
