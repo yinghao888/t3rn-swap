@@ -72,21 +72,33 @@ install_dependencies() {
         curl -sL https://deb.nodesource.com/setup_16.x | bash -
         apt-get install -y nodejs && npm install -g pm2 || { echo -e "${RED}❗ 无法安装 PM2😢${NC}"; exit 1; }
     fi
+
     # 创建虚拟环境并安装库
     if [ ! -d "$VENV_PATH" ]; then
         echo -e "${CYAN}📦 创建虚拟环境...🚚${NC}"
-        python3 -m venv "$VENV_PATH" || { echo -e "${RED}❗ 无法创建虚拟环境😢${NC}"; exit 1; }
+        python3 -m venv "$VENV_PATH" || { echo -e "${RED}❗ 无法创建虚拟环境，请检查 Python 环境和权限😢${NC}"; exit 1; }
     fi
-    source "$VENV_PATH/bin/activate"
+
+    # 检查虚拟环境是否创建成功
+    if [ ! -f "$VENV_PATH/bin/activate" ]; then
+        echo -e "${RED}❗ 虚拟环境激活文件 $VENV_PATH/bin/activate 不存在，创建失败😢${NC}"
+        exit 1
+    fi
+
+    # 激活虚拟环境
+    source "$VENV_PATH/bin/activate" || { echo -e "${RED}❗ 无法激活虚拟环境 $VENV_PATH/bin/activate😢${NC}"; exit 1; }
+
+    # 安装 Python 依赖
     for py_pkg in web3 cryptography; do
         if ! "$VENV_PATH/bin/pip" show "$py_pkg" >/dev/null 2>&1; then
             echo -e "${CYAN}📦 安装 $py_pkg（虚拟环境）...🚚${NC}"
-            "$VENV_PATH/bin/pip" install "$py_pkg" || { echo -e "${RED}❗ 无法安装 $py_pkg😢${NC}"; exit 1; }
+            "$VENV_PATH/bin/pip" install "$py_pkg" || { echo -e "${RED}❗ 无法安装 $py_pkg😢${NC}"; deactivate; exit 1; }
         else
             echo -e "${GREEN}✅ $py_pkg 已安装（虚拟环境）🎉${NC}"
         fi
     done
     deactivate
+
     # 使用 pipx 安装应用
     if ! pipx list | grep -q "python-telegram-bot"; then
         echo -e "${CYAN}📦 安装 python-telegram-bot...🚚${NC}"
@@ -94,6 +106,7 @@ install_dependencies() {
     else
         echo -e "${GREEN}✅ python-telegram-bot 已安装🎉${NC}"
     fi
+
     if ! command -v sha256sum >/dev/null 2>&1; then
         echo -e "${RED}❗ sha256sum 命令不可用，请确保 coreutils 已安装😢${NC}"
         exit 1
@@ -1140,87 +1153,4 @@ stop_running() {
 
 # === 删除脚本 ===
 delete_script() {
-    validate_points_file
-    echo -e "${RED}⚠️ 警告：将删除所有脚本和配置！继续？(y/n)${NC}"
-    read -p "> " confirm
-    if [ "$confirm" = "y" ] || [ "$confirm" = "Y" ]; then
-        pm2 stop "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >/dev/null 2>&1
-        pm2 delete "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >/dev/null 2>&1
-        rm -f "$ARB_SCRIPT" "$OP_SCRIPT" "$BALANCE_SCRIPT" "$CONFIG_FILE" "$DIRECTION_FILE" "$RPC_CONFIG_FILE" "$CONFIG_JSON" "$POINTS_JSON" "$POINTS_HASH_FILE" "$0"
-        echo -e "${GREEN}✅ 已删除所有文件！🎉${NC}"
-        exit 0
-    fi
-}
-
-# === 启动跨链脚本 ===
-start_bridge() {
-    validate_points_file
-    accounts=$(read_accounts)
-    if [ "$accounts" == "[]" ]; then
-        echo -e "${RED}❗ 请先添加账户！😢${NC}"
-        return
-    fi
-    direction=$(cat "$DIRECTION_FILE")
-    script=""
-    case "$direction" in
-        "arb_to_uni") script="$ARB_SCRIPT" ;;
-        "op_to_uni") script="$OP_SCRIPT" ;;
-        *) echo -e "${RED}❗ 无效方向！😢${NC}"; return ;;
-    esac
-    pm2 start "$VENV_PATH/bin/python3" --name "$PM2_PROCESS_NAME" -- "$script" --direction "$direction" >/dev/null 2>&1
-    echo -e "${GREEN}✅ 跨链脚本已启动！🎉${NC}"
-}
-
-# === 启动余额查询 ===
-start_balance_notifier() {
-    validate_points_file
-    pm2 start "$VENV_PATH/bin/python3" --name "$PM2_BALANCE_NAME" -- "$BALANCE_SCRIPT" --telegram_token "$TELEGRAM_BOT_TOKEN" --telegram_chat_id "$TELEGRAM_CHAT_ID" >/dev/null 2>&1
-    echo -e "${GREEN}✅ 余额查询脚本已启动！🎉${NC}"
-}
-
-# === 主菜单 ===
-main_menu() {
-    while true; do
-        banner
-        echo -e "${CYAN}🌟🌟🌟==================================================🌟🌟🌟${NC}"
-        echo -e "${CYAN}🌟🌟🌟                  主菜单                   🌟🌟🌟${NC}"
-        echo -e "${CYAN}🌟🌟🌟==================================================🌟🌟🌟${NC}"
-        echo "1. 配置 Telegram 🌐"
-        echo "2. 配置私钥 🔑"
-        echo "3. 充值点数 💸"
-        echo "4. 配置 RPC ⚙️"
-        echo "5. 配置速度 ⏱️"
-        echo "6. 配置跨链方向 🌉"
-        echo "7. 启动跨链脚本 🚀"
-        echo "8. 启动余额查询 📊"
-        echo "9. 查看日志 📜"
-        echo "10. 停止运行 🛑"
-        echo "11. 删除脚本 🗑️"
-        echo "12. 退出 ❌"
-        echo -e "${CYAN}🌟🌟🌟==================================================🌟🌟🌟${NC}"
-        read -p "请选择一个选项 (1-12): " choice
-        case $choice in
-            1) manage_telegram ;;
-            2) manage_private_keys ;;
-            3) recharge_points ;;
-            4) manage_rpc ;;
-            5) manage_speed ;;
-            6) select_direction ;;
-            7) start_bridge ;;
-            8) start_balance_notifier ;;
-            9) view_logs ;;
-            10) stop_running ;;
-            11) delete_script ;;
-            12) echo -e "${GREEN}✅ 退出脚本！🎉${NC}"; exit 0 ;;
-            *) echo -e "${RED}❗ 无效选项！😢${NC}" ;;
-        esac
-        read -p "按回车继续... ⏎"
-    done
-}
-
-# === 主程序 ===
-check_root
-install_dependencies
-download_python_scripts
-init_config
-main_menu
+    validate
