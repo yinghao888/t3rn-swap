@@ -1142,22 +1142,3 @@ delete_script() {
     validate_points_file
     echo -e "${RED}⚠️ 警告：将删除所有脚本和配置！继续？(y/n)${NC}"
     read -p "> " confirm
-    if [ "$confirm" = "y" ] || [ "$confirm" = "Y" ]; then
-        pm2 stop "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >/dev/null 2>&1
-        pm2 delete "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >/dev/null 2>&1
-        rm -f "$ARB_SCRIPT" "$OP_SCRIPT" "$BALANCE_SCRIPT" "$CONFIG_FILE" "$DIRECTION_FILE" "$RPC_CONFIG_FILE" "$CONFIG_JSON" "$POINTS_JSON" "$POINTS_HASH_FILE" "$0"
-        echo -e "${GREEN}✅ 已删除所有文件！🎉${NC}"
-        exit 0
-    fi
-}
-
-# === 启动跨链脚本 ===
-start_bridge() {
-    validate_points_file
-    accounts=$(read_accounts)
-    if [ "$accounts" == "[]" ]; then
-        echo -e "${RED}❗ 请先添加账户！😢${NC}"
-        return
-    fi
-    while IFS= read -r account; do
-        address=$(echo "$account" | jq -r '.address' || "$VENV_PATH/bin/python3
