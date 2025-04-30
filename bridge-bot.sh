@@ -1154,3 +1154,4 @@ stop_running() {
 # === 删除脚本 ===
 delete_script() {
     validate
+    }
