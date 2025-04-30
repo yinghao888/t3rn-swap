@@ -48,7 +48,7 @@ check_root() {
 install_dependencies() {
     echo -e "${CYAN}🔍 正在检查和安装必要的依赖...🛠️${NC}"
     apt-get update -y || { echo -e "${RED}❗ 无法更新包列表😢${NC}"; exit 1; }
-    for pkg in curl wget jq python3 python3-pip python3-dev bc coreutils; do
+    for pkg in curl wget jq python3 python3-pip python3-dev bc coreutils pipx; do
         if ! dpkg -l | grep -q "^ii.*$pkg "; then
             echo -e "${CYAN}📦 安装 $pkg...🚚${NC}"
             apt-get install -y "$pkg" || { echo -e "${RED}❗ 无法安装 $pkg😢${NC}"; exit 1; }
@@ -70,13 +70,6 @@ install_dependencies() {
         echo -e "${CYAN}🌐 安装 Node.js 和 PM2...📥${NC}"
         curl -sL https://deb.nodesource.com/setup_16.x | bash -
         apt-get install -y nodejs && npm install -g pm2 || { echo -e "${RED}❗ 无法安装 PM2😢${NC}"; exit 1; }
-    fi
-    if ! command -v pipx >/dev/null 2>&1; then
-        echo -e "${CYAN}📦 安装 pipx...🚚${NC}"
-        apt-get install -y python3-pip || { echo -e "${RED}❗ 无法安装 python3-pip😢${NC}"; exit 1; }
-        python3 -m pip install --user pipx || { echo -e "${RED}❗ 无法安装 pipx😢${NC}"; exit 1; }
-        python3 -m pipx ensurepath
-        export PATH="$PATH:/root/.local/bin"
     fi
     for py_pkg in web3 cryptography python-telegram-bot; do
         if ! pipx list | grep -q "$py_pkg"; then
@@ -294,7 +287,7 @@ get_account_balance() {
             ;;
     esac
     for url in $rpc_urls; do
-        balance_wei=$(python3 -c "from web3 import Web3; w3 = Web3(Web3.HTTPProvider('$url')); print(w3 eth.get_balance('$address'))" 2>/dev/null)
+        balance_wei=$(python3 -c "from web3 import Web3; w3 = Web3(Web3.HTTPProvider('$url')); print(w3.eth.get_balance('$address'))" 2>/dev/null)
         if [ -n "$balance_wei" ]; then
             break
         fi
@@ -492,7 +485,7 @@ manage_telegram() {
                     continue
                 fi
                 TELEGRAM_CHAT_ID="$chat_id"
-                echo "$TELEGRAM_CHAT_ID" > "telegram.conf"
+                echo "$chat_id" > telegram.conf
                 echo -e "${GREEN}✅ 已添加 Telegram ID: $chat_id 🎉${NC}"
                 ;;
             2)
@@ -508,7 +501,7 @@ manage_telegram() {
                     continue
                 fi
                 TELEGRAM_CHAT_ID=""
-                rm -f "telegram.conf"
+                rm -f telegram.conf
                 echo -e "${GREEN}✅ 已删除 Telegram ID！🎉${NC}"
                 ;;
             3)
@@ -1220,3 +1213,4 @@ install_dependencies
 download_python_scripts
 init_config
 main_menu
+</
