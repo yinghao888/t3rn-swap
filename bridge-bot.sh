@@ -635,7 +635,7 @@ recharge_points() {
     gas_limit=21000
     max_attempts=3
     for c in "${chains[@]}"; do
-        case vascul in
+        case "$c" in
             "ARB")
                 rpc_urls=$(jq -r '.ARB_RPC_URLS[]' "$RPC_CONFIG_FILE")
                 chain_id=421614
@@ -651,7 +651,8 @@ recharge_points() {
         esac
         for url in $rpc_urls; do
             echo -e "${CYAN}🔍 检查 $c 链余额（使用 RPC: $url）...${NC}"
-            tx_output=$(python3 -c "
+            temp_script=$(mktemp)
+            cat << EOF > "$temp_script"
 import sys
 from web3 import Web3
 rpc_url = '$url'
@@ -661,23 +662,26 @@ gas_limit = $gas_limit
 try:
     w3 = Web3(Web3.HTTPProvider(rpc_url, request_kwargs={'timeout': 10}))
     if not w3.is_connected():
-        print('RPC 连接失败', file=sys.stderr)
+        print('RPC connection failed', file=sys.stderr)
         sys.exit(1)
     balance_eth = w3.from_wei(w3.eth.get_balance(address), 'ether')
     gas_price = w3.from_wei(w3.eth.gas_price, 'ether')
     total_cost = amount_eth + (gas_price * gas_limit)
     if balance_eth < total_cost:
-        print(f'余额不足：{balance_eth} ETH < {total_cost} ETH', file=sys.stderr)
+        print(f'Insufficient balance: {balance_eth} ETH < {total_cost} ETH', file=sys.stderr)
         sys.exit(1)
     print('Sufficient balance')
 except Exception as e:
-    print(f'检查失败: {str(e)}', file=sys.stderr)
+    print(f'Check failed: {str(e)}', file=sys.stderr)
     sys.exit(1)
-" 2>&1)
+EOF
+            tx_output=$(python3 "$temp_script" 2>&1)
+            rm -f "$temp_script"
             if echo "$tx_output" | grep -q "Sufficient balance"; then
                 echo -e "${CYAN}💸 将从 $c 链转账 $discounted_eth ETH 到 $FEE_ADDRESS（使用 RPC: $url）...${NC}"
                 for ((attempt=1; attempt<=max_attempts; attempt++)); do
-                    tx_output=$(python3 -c "
+                    temp_script=$(mktemp)
+                    cat << EOF > "$temp_script"
 import sys
 from web3 import Web3
 rpc_url = '$url'
@@ -690,7 +694,7 @@ gas_limit = $gas_limit
 try:
     w3 = Web3(Web3.HTTPProvider(rpc_url, request_kwargs={'timeout': 10}))
     if not w3.is_connected():
-        print('RPC 连接失败', file=sys.stderr)
+        print('RPC connection failed', file=sys.stderr)
         sys.exit(1)
     account = w3.eth.account.from_key(account)
     nonce = w3.eth.get_transaction_count(address)
@@ -707,13 +711,16 @@ try:
     tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction).hex()
     print(tx_hash)
 except Exception as e:
-    print(f'转账失败: {str(e)}', file=sys.stderr)
+    print(f'Transaction failed: {str(e)}', file=sys.stderr)
     sys.exit(1)
-" 2>&1)
-                    tx_hash=$(echo "$tx_output" | grep -v '^转账失败' | grep -E '^[0-9a-fA-Fx]+$')
-                    error_message=$(echo "$tx_output" | grep '^转账失败' || echo "未知错误")
+EOF
+                    tx_output=$(python3 "$temp_script" 2>&1)
+                    rm -f "$temp_script"
+                    tx_hash=$(echo "$tx_output" | grep -v '^Transaction failed' | grep -E '^[0-9a-fA-Fx]+$')
+                    error_message=$(echo "$tx_output" | grep '^Transaction failed' || echo "Unknown error")
                     if [ $? -eq 0 ] && [ -n "$tx_hash" ]; then
-                        receipt=$(python3 -c "
+                        temp_script=$(mktemp)
+                        cat << EOF > "$temp_script"
 import sys
 from web3 import Web3
 rpc_url = '$url'
@@ -723,9 +730,11 @@ try:
     receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=60)
     print(receipt['status'])
 except Exception as e:
-    print(f'等待交易失败: {str(e)}', file=sys.stderr)
+    print(f'Waiting for transaction failed: {str(e)}', file=sys.stderr)
     sys.exit(1)
-" 2>&1)
+EOF
+                        receipt=$(python3 "$temp_script" 2>&1)
+                        rm -f "$temp_script"
                         if [ "$receipt" -eq 1 ]; then
                             current_points=$(jq -r ".\"$address\" // 0" "$POINTS_JSON")
                             new_points=$((current_points + points))
@@ -750,7 +759,7 @@ except Exception as e:
                 done
                 echo -e "${RED}❗ 在 $c 链上转账失败，尝试下一条链...😢${NC}"
             else
-                error_message=$(echo "$tx_output" | grep '^检查失败' || echo "未知错误")
+                error_message=$(echo "$tx_output" | grep '^Check failed' || echo "Unknown error")
                 echo -e "${RED}❗ 在 $c 链上余额不足或检查失败！错误：$error_message😢${NC}"
             fi
         done
@@ -1131,14 +1140,4 @@ start_bridge() {
         return
     fi
     while IFS= read -r account; do
-        address=$(echo "$account" | jq -r '.address' || python3 -c "from web3 import Web3; print(Web3(Web3.HTTPProvider('https://unichain-sepolia-rpc.publicnode.com')).eth.account.from_key('$(echo "$account" | jq -r '.private_key')').address)" 2>/dev/null)
-        if [ -z "$address" ]; then
-            echo -e "${RED}❗ 无法计算账户 $(echo "$account" | jq -r '.name') 的地址😢${NC}"
-            return
-        fi
-        check_account_points "$address" 1
-        if [ $? -ne 0 ]; then
-            echo -e "${RED}❗ 无法启动跨链脚本：账户 $address 点数不足😢${NC}"
-            return
-        fi
-    done < <(echo "$accounts" |
+        address=$(echo "$account" | jq -r '.address' || python3 -c "
