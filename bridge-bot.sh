@@ -996,10 +996,10 @@ update_python_config() {
     config=$(read_config)
     request_interval=$(echo "$config" | jq -r '.REQUEST_INTERVAL')
     amount_eth=$(echo "$config" | jq -r '.AMOUNT_ETH')
-    uni_to_arb_data=$(echo "$config" | jq -r '.UNI_TO_ARB_DATA_TEMPLATE' | sed 's/"/\\"/g')
-    arb_to_uni_data=$(echo "$config" | jq -r '.ARB_TO_UNI_DATA_TEMPLATE' | sed 's/"/\\"/g')
-    op_data=$(echo "$config" | jq -r '.OP_DATA_TEMPLATE' | sed 's/"/\\"/g')
-    uni_data=$(echo "$config" | jq -r '.UNI_DATA_TEMPLATE' | sed 's/"/\\"/g')
+    uni_to_arb_data=$(echo "$config" | jq -r '.UNI_TO_ARB_DATA_TEMPLATE')
+    arb_to_uni_data=$(echo "$config" | jq -r '.ARB_TO_UNI_DATA_TEMPLATE')
+    op_data=$(echo "$config" | jq -r '.OP_DATA_TEMPLATE')
+    uni_data=$(echo "$config" | jq -r '.UNI_DATA_TEMPLATE')
     for script in "$ARB_SCRIPT" "$OP_SCRIPT"; do
         if [ ! -f "$script" ]; then
             echo -e "${RED}❗ 错误：$script 不存在😢${NC}"
@@ -1010,14 +1010,15 @@ update_python_config() {
             return
         fi
     done
+    # 使用更安全的 sed 语法，确保正确处理字符串
     sed -i "s|^REQUEST_INTERVAL = .*|REQUEST_INTERVAL = $request_interval|" "$ARB_SCRIPT"
     sed -i "s|^AMOUNT_ETH = .*|AMOUNT_ETH = $amount_eth|" "$ARB_SCRIPT"
-    sed -i "s|^UNI_TO_ARB_DATA_TEMPLATE = .*|UNI_TO_ARB_DATA_TEMPLATE = \"$uni_to_arb_data\"|" "$ARB_SCRIPT"
-    sed -i "s|^ARB_TO_UNI_DATA_TEMPLATE = .*|ARB_TO_UNI_DATA_TEMPLATE = \"$arb_to_uni_data\"|" "$ARB_SCRIPT"
+    sed -i "s|^UNI_TO_ARB_DATA_TEMPLATE = .*|UNI_TO_ARB_DATA_TEMPLATE = '$uni_to_arb_data'|" "$ARB_SCRIPT"
+    sed -i "s|^ARB_TO_UNI_DATA_TEMPLATE = .*|ARB_TO_UNI_DATA_TEMPLATE = '$arb_to_uni_data'|" "$ARB_SCRIPT"
     sed -i "s|^REQUEST_INTERVAL = .*|REQUEST_INTERVAL = $request_interval|" "$OP_SCRIPT"
     sed -i "s|^AMOUNT_ETH = .*|AMOUNT_ETH = $amount_eth|" "$OP_SCRIPT"
-    sed -i "s|^OP_DATA_TEMPLATE = .*|OP_DATA_TEMPLATE = \"$op_data\"|" "$OP_SCRIPT"
-    sed -i "s|^UNI_DATA_TEMPLATE = .*|UNI_DATA_TEMPLATE = \"$uni_data\"|" "$OP_SCRIPT"
+    sed -i "s|^OP_DATA_TEMPLATE = .*|OP_DATA_TEMPLATE = '$op_data'|" "$OP_SCRIPT"
+    sed -i "s|^UNI_DATA_TEMPLATE = .*|UNI_DATA_TEMPLATE = '$uni_data'|" "$OP_SCRIPT"
     echo -e "${GREEN}✅ 已更新 $ARB_SCRIPT 和 $OP_SCRIPT 的配置！🎉${NC}"
     echo -e "${CYAN}📋 当前 $ARB_SCRIPT 配置：${NC}"
     grep "^REQUEST_INTERVAL =" "$ARB_SCRIPT"
@@ -1028,4 +1029,198 @@ update_python_config() {
     grep "^REQUEST_INTERVAL =" "$OP_SCRIPT"
     grep "^AMOUNT_ETH =" "$OP_SCRIPT"
     grep "^OP_DATA_TEMPLATE =" "$OP_SCRIPT"
-    grep "^UNI_DATA_TEMPLATE =" "$敏感的 toplevel domain (TLD) in .cn (China) toplevel domain (TLD) in .tw (Taiwan) .edu (Educational) .gov (Government) .mil (Military) .org (Organization) .eu (European Union) .fr (France) .ru (Russia) .uk (United Kingdom) .it (Italy) .de (Germany) .jp (Japan) .kr (South Korea) .in (India) .ir (Iran) .ca (Canada) .au (Australia) .br (Brazil) .za (South Africa) .tr (Turkey) .mx (Mexico) .nl (Netherlands) .ch (Switzerland) .es (Spain) .se (Sweden) .no (Norway) .dk (Denmark) .fi (Finland) .my (Malaysia) .sg (Singapore) .id (Indonesia) .th (Thailand) .vn (Vietnam) .ph (Philippines) .ar (Argentina) .cl (Chile) .co (Colombia) .pe (Peru) .ve (Venezuela) .ec (Ecuador) .uy (Uruguay) .py (Paraguay) .bo (Bolivia) .gt (Guatemala) .hn (Honduras) .ni (Nicaragua) .cr (Costa Rica) .pa (Panama) .sv (El Salvador) .do (Dominican Republic) .pr (Puerto Rico) .cu (Cuba) .jm (Jamaica) .tt (Trinidad and Tobago) .gy (Guyana) .sr (Suriname) .bz (Belize) .bs (Bahamas) .bb (Barbados) .lc (Saint Lucia) .vc (Saint Vincent and the Grenadines) .gd (Grenada) .ag (Antigua and Barbuda) .dm (Dominica) .kn (Saint Kitts and Nevis) .ai (Anguilla) .ms (Montserrat) .vg (British Virgin Islands) .ky (Cayman Islands) .bm (Bermuda) .tc (Turks and Caicos Islands) .fk (Falkland Islands) .sh (Saint Helena) .je (Jersey) .gg (Guernsey) .im (Isle of Man) .gi (Gibraltar) .mt (Malta) .cy (Cyprus) .gr (Greece) .pt (Portugal) .at (Austria) .be (Belgium) .lu (Luxembourg) .ie (Ireland) .is (Iceland) .li (Liechtenstein) .mc (Monaco) .ad (Andorra) .sm (San Marino) .va (Vatican City) .hu (Hungary) .cz (Czech Republic) .sk (Slovakia) .pl (Poland) .lt (Lithuania) .lv (Latvia) .ee (Estonia) .si (Slovenia) .hr (Croatia) .ba (Bosnia and Herzegovina) .me (Montenegro) .rs (Serbia) .mk (North Macedonia) .al (Albania) .bg (Bulgaria) .ro (Romania) .md (Moldova) .ua (Ukraine) .by (Belarus) .ge (Georgia) .am (Armenia) .az (Azerbaijan) .kz (Kazakhstan) .kg (Kyrgyzstan) .tj (Tajikistan) .tm (Turkmenistan) .uz (Uzbekistan) .mn (Mongolia) .kp (North Korea) .af (Afghanistan) .pk (Pakistan) .bd (Bangladesh) .lk (Sri Lanka) .np (Nepal) .bt (Bhutan) .mv (Maldives) .mm (Myanmar) .la (Laos) .kh (Cambodia) .bn (Brunei) .tl (East Timor) .pg (Papua New Guinea) .sb (Solomon Islands) .vu (Vanuatu) .fj (Fiji) .to (Tonga) .ws (Samoa) .ki (Kiribati) .tv (Tuvalu) .nr (Nauru) .mh (Marshall Islands) .fm (Micronesia) .pw (Palau) .ck (Cook Islands) .nu (Niue) .tk (Tokelau) .wf (Wallis and Futuna) .pf (French Polynesia) .nc (New Caledonia) .pn (Pitcairn Islands) .nf (Norfolk Island) .cx (Christmas Island) .cc (Cocos Islands) .hm (Heard Island and McDonald Islands) .aq (Antarctica) .bv (Bouvet Island) .gs (South Georgia and the South Sandwich Islands) .tf (French Southern
+    grep "^UNI_DATA_TEMPLATE =" "$OP_SCRIPT"
+}
+
+# === 更新 Python 脚本账户 ===
+update_python_accounts() {
+    validate_points_file
+    accounts=$(read_accounts)
+    accounts_str=$(echo "$accounts" | jq -r '[.[] | {"private_key": .private_key, "name": .name}]' | jq -r '@json')
+    if [ -z "$accounts_str" ] || [ "$accounts_str" == "[]" ]; then
+        accounts_str="[]"
+        echo -e "${RED}❗ 警告：账户列表为空，将设置 ACCOUNTS 为空😢${NC}"
+    fi
+    for script in "$ARB_SCRIPT" "$OP_SCRIPT"; do
+        if [ ! -f "$script" ]; then
+            echo -e "${RED}❗ 错误：$script 不存在😢${NC}"
+            return 1
+        fi
+        if [ ! -w "$script" ]; then
+            echo -e "${RED}❗ 错误：$script 不可写，请检查权限😢${NC}"
+            return 1
+        fi
+        temp_file=$(mktemp)
+        cp "$script" "$temp_file" || {
+            echo -e "${RED}❗ 错误：无法备份 $script😢${NC}"
+            rm -f "$temp_file"
+            return 1
+        }
+        if grep -q "^ACCOUNTS = " "$script"; then
+            sed "s|^ACCOUNTS = .*|ACCOUNTS = $accounts_str|" "$script" > "$script.tmp" || {
+                echo -e "${RED}❗ 错误：更新 $script 失败😢${NC}"
+                mv "$temp_file" "$script"
+                rm -f "$script.tmp"
+                return 1
+            }
+        else
+            echo "ACCOUNTS = $accounts_str" > "$script.tmp"
+            cat "$script" >> "$script.tmp" || {
+                echo -e "${RED}❗ 错误：追加 $script 失败😢${NC}"
+                mv "$temp_file" "$script"
+                rm -f "$script.tmp"
+                return 1
+            }
+        fi
+        mv "$script.tmp" "$script" || {
+            echo -e "${RED}❗ 错误：移动临时文件到 $script 失败😢${NC}"
+            mv "$temp_file" "$script"
+            return 1
+        }
+        current_accounts=$(grep "^ACCOUNTS = " "$script" | sed 's/ACCOUNTS = //')
+        normalized_accounts_str=$(echo "$accounts_str" | tr -d ' \n')
+        normalized_current_accounts=$(echo "$current_accounts" | tr -d ' \n')
+        if [ "$normalized_current_accounts" != "$normalized_accounts_str" ]; then
+            echo -e "${RED}❗ 错误：验证 $script 更新失败，内容不匹配😢${NC}"
+            echo -e "${CYAN}预期内容：$accounts_str${NC}"
+            echo -e "${CYAN}实际内容：$current_accounts${NC}"
+            mv "$temp_file" "$script"
+            rm -f "$temp_file"
+            return 1
+        fi
+        rm -f "$temp_file"
+    done
+    echo -e "${GREEN}✅ 已更新 $ARB_SCRIPT 和 $OP_SCRIPT 的账户！🎉${NC}"
+    echo -e "${CYAN}📋 当前 $ARB_SCRIPT ACCOUNTS 内容：${NC}"
+    grep "^ACCOUNTS = " "$ARB_SCRIPT" || echo "ACCOUNTS 未定义"
+    echo -e "${CYAN}📋 当前 $OP_SCRIPT ACCOUNTS 内容：${NC}"
+    grep "^ACCOUNTS = " "$OP_SCRIPT" || echo "ACCOUNTS 未定义"
+}
+
+# === 配置跨链方向 ===
+select_direction() {
+    validate_points_file
+    echo -e "${CYAN}🌉 请选择跨链方向：${NC}"
+    echo "1. ARB -> UNI 🌟"
+    echo "2. OP <-> UNI 🌟"
+    read -p "> " choice
+    case $choice in
+        1)
+            echo "arb_to_uni" > "$DIRECTION_FILE"
+            echo -e "${GREEN}✅ 设置为 ARB -> UNI 🎉${NC}"
+            ;;
+        2)
+            echo "op_to_uni" > "$DIRECTION_FILE"
+            echo -e "${GREEN}✅ 设置为 OP <-> UNI 🎉${NC}"
+            ;;
+        *)
+            echo -e "${RED}❗ 无效选项，默认 ARB -> UNI😢${NC}"
+            echo "arb_to_uni" > "$DIRECTION_FILE"
+            ;;
+    esac
+}
+
+# === 查看日志 ===
+view_logs() {
+    validate_points_file
+    echo -e "${CYAN}📜 显示 PM2 日志...${NC}"
+    pm2 logs --lines 50
+    echo -e "${CYAN}✅ 日志显示完成，按回车返回 ⏎${NC}"
+    read -p "按回车继续... ⏎"
+}
+
+# === 停止运行 ===
+stop_running() {
+    validate_points_file
+    echo -e "${CYAN}🛑 正在停止跨链脚本和余额查询...${NC}"
+    pm2 stop "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >/dev/null 2>&1
+    pm2 delete "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >/dev/null 2>&1
+    echo -e "${GREEN}✅ 已停止所有脚本！🎉${NC}"
+}
+
+# === 删除脚本 ===
+delete_script() {
+    validate_points_file
+    echo -e "${RED}⚠️ 警告：将删除所有脚本和配置！继续？(y/n)${NC}"
+    read -p "> " confirm
+    if [ "$confirm" = "y" ] || [ "$confirm" = "Y" ]; then
+        pm2 stop "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >/dev/null 2>&1
+        pm2 delete "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >/dev/null 2>&1
+        rm -f "$ARB_SCRIPT" "$OP_SCRIPT" "$BALANCE_SCRIPT" "$CONFIG_FILE" "$DIRECTION_FILE" "$RPC_CONFIG_FILE" "$CONFIG_JSON" "$POINTS_JSON" "$POINTS_HASH_FILE" "$0"
+        echo -e "${GREEN}✅ 已删除所有文件！🎉${NC}"
+        exit 0
+    fi
+}
+
+# === 启动跨链脚本 ===
+start_bridge() {
+    validate_points_file
+    accounts=$(read_accounts)
+    if [ "$accounts" == "[]" ]; then
+        echo -e "${RED}❗ 请先添加账户！😢${NC}"
+        return
+    fi
+    direction=$(cat "$DIRECTION_FILE")
+    script=""
+    case "$direction" in
+        "arb_to_uni") script="$ARB_SCRIPT" ;;
+        "op_to_uni") script="$OP_SCRIPT" ;;
+        *) echo -e "${RED}❗ 无效方向！😢${NC}"; return ;;
+    esac
+    pm2 start "$VENV_PATH/bin/python3" --name "$PM2_PROCESS_NAME" -- "$script" --direction "$direction" >/dev/null 2>&1
+    echo -e "${GREEN}✅ 跨链脚本已启动！🎉${NC}"
+}
+
+# === 启动余额查询 ===
+start_balance_notifier() {
+    validate_points_file
+    pm2 start "$VENV_PATH/bin/python3" --name "$PM2_BALANCE_NAME" -- "$BALANCE_SCRIPT" --telegram_token "$TELEGRAM_BOT_TOKEN" --telegram_chat_id "$TELEGRAM_CHAT_ID" >/dev/null 2>&1
+    echo -e "${GREEN}✅ 余额查询脚本已启动！🎉${NC}"
+}
+
+# === 主菜单 ===
+main_menu() {
+    while true; do
+        banner
+        echo -e "${CYAN}🌟🌟🌟==================================================🌟🌟🌟${NC}"
+        echo -e "${CYAN}🌟🌟🌟                  主菜单                   🌟🌟🌟${NC}"
+        echo -e "${CYAN}🌟🌟🌟==================================================🌟🌟🌟${NC}"
+        echo "1. 配置 Telegram 🌐"
+        echo "2. 配置私钥 🔑"
+        echo "3. 充值点数 💸"
+        echo "4. 配置 RPC ⚙️"
+        echo "5. 配置速度 ⏱️"
+        echo "6. 配置跨链方向 🌉"
+        echo "7. 启动跨链脚本 🚀"
+        echo "8. 启动余额查询 📊"
+        echo "9. 查看日志 📜"
+        echo "10. 停止运行 🛑"
+        echo "11. 删除脚本 🗑️"
+        echo "12. 退出 ❌"
+        echo -e "${CYAN}🌟🌟🌟==================================================🌟🌟🌟${NC}"
+        read -p "请选择一个选项 (1-12): " choice
+        case $choice in
+            1) manage_telegram ;;
+            2) manage_private_keys ;;
+            3) recharge_points ;;
+            4) manage_rpc ;;
+            5) manage_speed ;;
+            6) select_direction ;;
+            7) start_bridge ;;
+            8) start_balance_notifier ;;
+            9) view_logs ;;
+            10) stop_running ;;
+            11) delete_script ;;
+            12) echo -e "${GREEN}✅ 退出脚本！🎉${NC}"; exit 0 ;;
+            *) echo -e "${RED}❗ 无效选项！😢${NC}" ;;
+        esac
+        read -p "按回车继续... ⏎"
+    done
+}
+
+# === 主程序 ===
+check_root
+install_dependencies
+download_python_scripts
+init_config
+main_menu
