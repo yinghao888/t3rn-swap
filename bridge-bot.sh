@@ -1009,10 +1009,10 @@ update_python_config() {
     config=$(read_config)
     request_interval=$(echo "$config" | jq -r '.REQUEST_INTERVAL')
     amount_eth=$(echo "$config" | jq -r '.AMOUNT_ETH')
-    uni_to_arb_data=$(echo "$config" | jq -r '.UNI_TO_ARB_DATA_TEMPLATE')
-    arb_to_uni_data=$(echo "$config" | jq -r '.ARB_TO_UNI_DATA_TEMPLATE')
-    op_data=$(echo "$config" | jq -r '.OP_DATA_TEMPLATE')
-    uni_data=$(echo "$config" | jq -r '.UNI_DATA_TEMPLATE')
+    uni_to_arb_data=$(echo "$config" | jq -r '.UNI_TO_ARB_DATA_TEMPLATE' | sed "s/'/\\'/g")
+    arb_to_uni_data=$(echo "$config" | jq -r '.ARB_TO_UNI_DATA_TEMPLATE' | sed "s/'/\\'/g")
+    op_data=$(echo "$config" | jq -r '.OP_DATA_TEMPLATE' | sed "s/'/\\'/g")
+    uni_data=$(echo "$config" | jq -r '.UNI_DATA_TEMPLATE' | sed "s/'/\\'/g")
     for script in "$ARB_SCRIPT" "$OP_SCRIPT"; do
         if [ ! -f "$script" ]; then
             echo -e "${RED}❗ 错误：$script 不存在😢${NC}"
@@ -1023,7 +1023,6 @@ update_python_config() {
             return
         fi
     done
-    # 使用更安全的 sed 语法，确保正确处理字符串
     sed -i "s|^REQUEST_INTERVAL = .*|REQUEST_INTERVAL = $request_interval|" "$ARB_SCRIPT"
     sed -i "s|^AMOUNT_ETH = .*|AMOUNT_ETH = $amount_eth|" "$ARB_SCRIPT"
     sed -i "s|^UNI_TO_ARB_DATA_TEMPLATE = .*|UNI_TO_ARB_DATA_TEMPLATE = '$uni_to_arb_data'|" "$ARB_SCRIPT"
@@ -1036,4 +1035,106 @@ update_python_config() {
     echo -e "${CYAN}📋 当前 $ARB_SCRIPT 配置：${NC}"
     grep "^REQUEST_INTERVAL =" "$ARB_SCRIPT"
     grep "^AMOUNT_ETH =" "$ARB_SCRIPT"
-    grep "^UNI_TO_ARB_DATA_TEMPLATE
+    grep "^UNI_TO_ARB_DATA_TEMPLATE =" "$ARB_SCRIPT"
+    grep "^ARB_TO_UNI_DATA_TEMPLATE =" "$ARB_SCRIPT"
+    echo -e "${CYAN}📋 当前 $OP_SCRIPT 配置：${NC}"
+    grep "^REQUEST_INTERVAL =" "$OP_SCRIPT"
+    grep "^AMOUNT_ETH =" "$OP_SCRIPT"
+    grep "^OP_DATA_TEMPLATE =" "$OP_SCRIPT"
+    grep "^UNI_DATA_TEMPLATE =" "$OP_SCRIPT"
+}
+
+# === 更新 Python 脚本账户 ===
+update_python_accounts() {
+    validate_points_file
+    accounts=$(read_accounts)
+    accounts_str=$(echo "$accounts" | jq -r '[.[] | {"private_key": .private_key, "name": .name}]' | jq -r '@json')
+    if [ -z "$accounts_str" ] || [ "$accounts_str" == "[]" ]; then
+        accounts_str="[]"
+        echo -e "${RED}❗ 警告：账户列表为空，将设置 ACCOUNTS 为空😢${NC}"
+    fi
+    for script in "$ARB_SCRIPT" "$OP_SCRIPT"; do
+        if [ ! -f "$script" ]; then
+            echo -e "${RED}❗ 错误：$script 不存在😢${NC}"
+            return 1
+        fi
+        if [ ! -w "$script" ]; then
+            echo -e "${RED}❗ 错误：$script 不可写，请检查权限😢${NC}"
+            return 1
+        fi
+        temp_file=$(mktemp)
+        cp "$script" "$temp_file" || {
+            echo -e "${RED}❗ 错误：无法备份 $script😢${NC}"
+            rm -f "$temp_file"
+            return 1
+        }
+        if grep -q "^ACCOUNTS = " "$script"; then
+            sed "s|^ACCOUNTS = .*|ACCOUNTS = $accounts_str|" "$script" > "$script.tmp" || {
+                echo -e "${RED}❗ 错误：更新 $script 失败😢${NC}"
+                mv "$temp_file" "$script"
+                rm -f "$script.tmp"
+                return 1
+            }
+        else
+            echo "ACCOUNTS = $accounts_str" > "$script.tmp"
+            cat "$script" >> "$script.tmp" || {
+                echo -e "${RED}❗ 错误：追加 $script 失败😢${NC}"
+                mv "$temp_file" "$script"
+                rm -f "$script.tmp"
+                return 1
+            }
+        fi
+        mv "$script.tmp" "$script" || {
+            echo -e "${RED}❗ 错误：移动临时文件到 $script 失败😢${NC}"
+            mv "$temp_file" "$script"
+            return 1
+        }
+        current_accounts=$(grep "^ACCOUNTS = " "$script" | sed 's/ACCOUNTS = //')
+        normalized_accounts_str=$(echo "$accounts_str" | tr -d ' \n')
+        normalized_current_accounts=$(echo "$current_accounts" | tr -d ' \n')
+        if [ "$normalized_current_accounts" != "$normalized_accounts_str" ]; then
+            echo -e "${RED}❗ 错误：验证 $script 更新失败，内容不匹配😢${NC}"
+            echo -e "${CYAN}预期内容：$accounts_str${NC}"
+            echo -e "${CYAN}实际内容：$current_accounts${NC}"
+            mv "$temp_file" "$script"
+            rm -f "$temp_file"
+            return 1
+        fi
+        rm -f "$temp_file"
+    done
+    echo -e "${GREEN}✅ 已更新 $ARB_SCRIPT 和 $OP_SCRIPT 的账户！🎉${NC}"
+    echo -e "${CYAN}📋 当前 $ARB_SCRIPT ACCOUNTS 内容：${NC}"
+    grep "^ACCOUNTS = " "$ARB_SCRIPT" || echo "ACCOUNTS 未定义"
+    echo -e "${CYAN}📋 当前 $OP_SCRIPT ACCOUNTS 内容：${NC}"
+    grep "^ACCOUNTS = " "$OP_SCRIPT" || echo "ACCOUNTS 未定义"
+}
+
+# === 配置跨链方向 ===
+select_direction() {
+    validate_points_file
+    echo -e "${CYAN}🌉 请选择跨链方向：${NC}"
+    echo "1. ARB -> UNI 🌟"
+    echo "2. OP <-> UNI 🌟"
+    read -p "> " choice
+    case $choice in
+        1)
+            echo "arb_to_uni" > "$DIRECTION_FILE"
+            echo -e "${GREEN}✅ 设置为 ARB -> UNI 🎉${NC}"
+            ;;
+        2)
+            echo "op_to_uni" > "$DIRECTION_FILE"
+            echo -e "${GREEN}✅ 设置为 OP <-> UNI 🎉${NC}"
+            ;;
+        *)
+            echo -e "${RED}❗ 无效选项，默认 ARB -> UNI😢${NC}"
+            echo "arb_to_uni" > "$DIRECTION_FILE"
+            ;;
+    esac
+}
+
+# === 查看日志 ===
+view_logs() {
+    validate_points_file
+    echo -e "${CYAN}📜 显示 PM2 日志...${NC}"
+    pm2 logs --lines 50
+    echo -e "${CYAN}✅ 日志显示完成，按
