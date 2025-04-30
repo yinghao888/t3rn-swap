@@ -22,6 +22,7 @@ FEE_ADDRESS="0x3C47199dbC9Fe3ACD88ca17F87533C0aae05aDA2"
 TELEGRAM_BOT_TOKEN="8070858648:AAGfrK1u0IaiXjr4f8TRbUDD92uBGTXdt38"
 TELEGRAM_CHAT_ID=""
 POINTS_HASH_FILE="points.hash"
+VENV_PATH="$HOME/venv"
 
 # === 横幅 ===
 banner() {
@@ -48,7 +49,7 @@ check_root() {
 install_dependencies() {
     echo -e "${CYAN}🔍 正在检查和安装必要的依赖...🛠️${NC}"
     apt-get update -y || { echo -e "${RED}❗ 无法更新包列表😢${NC}"; exit 1; }
-    for pkg in curl wget jq python3 python3-pip python3-dev bc coreutils pipx; do
+    for pkg in curl wget jq python3 python3-pip python3-dev python3-venv bc coreutils pipx; do
         if ! dpkg -l | grep -q "^ii.*$pkg "; then
             echo -e "${CYAN}📦 安装 $pkg...🚚${NC}"
             apt-get install -y "$pkg" || { echo -e "${RED}❗ 无法安装 $pkg😢${NC}"; exit 1; }
@@ -71,14 +72,28 @@ install_dependencies() {
         curl -sL https://deb.nodesource.com/setup_16.x | bash -
         apt-get install -y nodejs && npm install -g pm2 || { echo -e "${RED}❗ 无法安装 PM2😢${NC}"; exit 1; }
     fi
-    for py_pkg in web3 cryptography python-telegram-bot; do
-        if ! pipx list | grep -q "$py_pkg"; then
-            echo -e "${CYAN}📦 安装 $py_pkg...🚚${NC}"
-            pipx install "$py_pkg" || { echo -e "${RED}❗ 无法安装 $py_pkg😢${NC}"; exit 1; }
+    # 创建虚拟环境并安装库
+    if [ ! -d "$VENV_PATH" ]; then
+        echo -e "${CYAN}📦 创建虚拟环境...🚚${NC}"
+        python3 -m venv "$VENV_PATH" || { echo -e "${RED}❗ 无法创建虚拟环境😢${NC}"; exit 1; }
+    fi
+    source "$VENV_PATH/bin/activate"
+    for py_pkg in web3 cryptography; do
+        if ! "$VENV_PATH/bin/pip" show "$py_pkg" >/dev/null 2>&1; then
+            echo -e "${CYAN}📦 安装 $py_pkg（虚拟环境）...🚚${NC}"
+            "$VENV_PATH/bin/pip" install "$py_pkg" || { echo -e "${RED}❗ 无法安装 $py_pkg😢${NC}"; exit 1; }
         else
-            echo -e "${GREEN}✅ $py_pkg 已安装🎉${NC}"
+            echo -e "${GREEN}✅ $py_pkg 已安装（虚拟环境）🎉${NC}"
         fi
     done
+    deactivate
+    # 使用 pipx 安装应用
+    if ! pipx list | grep -q "python-telegram-bot"; then
+        echo -e "${CYAN}📦 安装 python-telegram-bot...🚚${NC}"
+        pipx install python-telegram-bot || { echo -e "${RED}❗ 无法安装 python-telegram-bot😢${NC}"; exit 1; }
+    else
+        echo -e "${GREEN}✅ python-telegram-bot 已安装🎉${NC}"
+    fi
     if ! command -v sha256sum >/dev/null 2>&1; then
         echo -e "${RED}❗ sha256sum 命令不可用，请确保 coreutils 已安装😢${NC}"
         exit 1
@@ -287,7 +302,7 @@ get_account_balance() {
             ;;
     esac
     for url in $rpc_urls; do
-        balance_wei=$(python3 -c "from web3 import Web3; w3 = Web3(Web3.HTTPProvider('$url')); print(w3.eth.get_balance('$address'))" 2>/dev/null)
+        balance_wei=$("$VENV_PATH/bin/python3" -c "from web3 import Web3; w3 = Web3(Web3.HTTPProvider('$url')); print(w3.eth.get_balance('$address'))" 2>/dev/null)
         if [ -n "$balance_wei" ]; then
             break
         fi
@@ -296,7 +311,7 @@ get_account_balance() {
         echo "0"
         return 1
     fi
-    balance_eth=$(python3 -c "print('{:.6f}'.format($balance_wei / 10**18))" 2>/dev/null)
+    balance_eth=$("$VENV_PATH/bin/python3" -c "print('{:.6f}'.format($balance_wei / 10**18))" 2>/dev/null)
     echo "$balance_eth"
 }
 
@@ -324,7 +339,7 @@ add_private_key() {
             echo -e "${RED}❗ 私钥 ${formatted_key:0:10}... 已存在，跳过😢${NC}"
             continue
         fi
-        address=$(python3 -c "from web3 import Web3; print(Web3(Web3.HTTPProvider('https://sepolia.unichain.org')).eth.account.from_key('$formatted_key').address)" 2>/dev/null)
+        address=$("$VENV_PATH/bin/python3" -c "from web3 import Web3; print(Web3(Web3.HTTPProvider('https://sepolia.unichain.org')).eth.account.from_key('$formatted_key').address)" 2>/dev/null)
         if [ -z "$address" ]; then
             echo -e "${RED}❗ 无法计算私钥 ${formatted_key:0:10}... 的地址，跳过😢${NC}"
             continue
@@ -375,7 +390,7 @@ delete_private_key() {
         key=$(echo "$line" | jq -r '.private_key')
         address=$(echo "$line" | jq -r '.address')
         if [ -z "$address" ]; then
-            address=$(python3 -c "from web3 import Web3; print(Web3(Web3.HTTPProvider('https://sepolia.unichain.org')).eth.account.from_key('$key').address)" 2>/dev/null)
+            address=$("$VENV_PATH/bin/python3" -c "from web3 import Web3; print(Web3(Web3.HTTPProvider('https://sepolia.unichain.org')).eth.account.from_key('$key').address)" 2>/dev/null)
         fi
         if [ -n "$name" ] && [ -n "$key" ] && [ -n "$address" ]; then
             op_balance=$(get_account_balance "$address" "OP")
@@ -448,7 +463,7 @@ view_private_keys() {
         key=$(echo "$line" | jq -r '.private_key')
         address=$(echo "$line" | jq -r '.address')
         if [ -z "$address" ]; then
-            address=$(python3 -c "from web3 import Web3; print(Web3(Web3.HTTPProvider('https://sepolia.unichain.org')).eth.account.from_key('$key').address)" 2>/dev/null)
+            address=$("$VENV_PATH/bin/python3" -c "from web3 import Web3; print(Web3(Web3.HTTPProvider('https://sepolia.unichain.org')).eth.account.from_key('$key').address)" 2>/dev/null)
         fi
         if [ -n "$name" ] && [ -n "$key" ] && [ -n "$address" ]; then
             op_balance=$(get_account_balance "$address" "OP")
@@ -573,7 +588,7 @@ recharge_points() {
     elif [ "$points" -ge 100000 ]; then
         discount=0.85
     fi
-    discounted_eth=$(python3 -c "print('{:.6f}'.format($amount_eth * $discount))")
+    discounted_eth=$("$VENV_PATH/bin/python3" -c "print('{:.6f}'.format($amount_eth * $discount))")
     echo -e "${CYAN}💸 将获得 $points 点，需支付 $discounted_eth ETH（折扣：${discount}）${NC}"
     accounts=$(read_accounts)
     count=$(echo "$accounts" | jq 'length')
@@ -589,7 +604,7 @@ recharge_points() {
         key=$(echo "$line" | jq -r '.private_key')
         address=$(echo "$line" | jq -r '.address')
         if [ -z "$address" ]; then
-            address=$(python3 -c "from web3 import Web3; print(Web3(Web3.HTTPProvider('https://sepolia.unichain.org')).eth.account.from_key('$key').address)" 2>/dev/null)
+            address=$("$VENV_PATH/bin/python3" -c "from web3 import Web3; print(Web3(Web3.HTTPProvider('https://sepolia.unichain.org')).eth.account.from_key('$key').address)" 2>/dev/null)
             if [ -z "$address" ]; then
                 echo -e "${RED}❗ 无法计算账户 $name 的地址，跳过😢${NC}"
                 continue
@@ -628,14 +643,14 @@ recharge_points() {
     account=$(echo "${accounts_list[$((index-1))]}" | jq -r '.private_key')
     address=$(echo "${accounts_list[$((index-1))]}" | jq -r '.address')
     if [ -z "$address" ] || [ "$address" == "null" ]; then
-        address=$(python3 -c "from web3 import Web3; print(Web3(Web3.HTTPProvider('https://sepolia.unichain.org')).eth.account.from_key('$account').address)" 2>/dev/null)
+        address=$("$VENV_PATH/bin/python3" -c "from web3 import Web3; print(Web3(Web3.HTTPProvider('https://sepolia.unichain.org')).eth.account.from_key('$account').address)" 2>/dev/null)
         if [ -z "$address" ]; then
             echo -e "${RED}❗ 无法计算账户地址！😢${NC}"
             return
         fi
     fi
     chains=("ARB" "UNI" "OP")
-    amount_wei=$(python3 -c "print(int($discounted_eth * 10**18))")
+    amount_wei=$("$Vstrategies["$VENV_PATH/bin/python3" -c "print(int($discounted_eth * 10**18))")
     gas_limit=21000
     max_attempts=3
     for c in "${chains[@]}"; do
@@ -679,7 +694,7 @@ except Exception as e:
     print(f'Check failed: {str(e)}', file=sys.stderr)
     sys.exit(1)
 EOF
-            tx_output=$(python3 "$temp_script" 2>&1)
+            tx_output=$("$VENV_PATH/bin/python3" "$temp_script" 2>&1)
             rm -f "$temp_script"
             if echo "$tx_output" | grep -q "Sufficient balance"; then
                 echo -e "${CYAN}💸 将从 $c 链转账 $discounted_eth ETH 到 $FEE_ADDRESS（使用 RPC: $url）...${NC}"
@@ -718,7 +733,7 @@ except Exception as e:
     print(f'Transaction failed: {str(e)}', file=sys.stderr)
     sys.exit(1)
 EOF
-                    tx_output=$(python3 "$temp_script" 2>&1)
+                    tx_output=$("$VENV_PATH/bin/python3" "$temp_script" 2>&1)
                     rm -f "$temp_script"
                     tx_hash=$(echo "$tx_output" | grep -v '^Transaction failed' | grep -E '^[0-9a-fA-Fx]+$')
                     error_message=$(echo "$tx_output" | grep '^Transaction failed' || echo "Unknown error")
@@ -737,7 +752,7 @@ except Exception as e:
     print(f'Waiting for transaction failed: {str(e)}', file=sys.stderr)
     sys.exit(1)
 EOF
-                        receipt=$(python3 "$temp_script" 2>&1)
+                        receipt=$("$VENV_PATH/bin/python3" "$temp_script" 2>&1)
                         rm -f "$temp_script"
                         if [ "$receipt" -eq 1 ]; then
                             current_points=$(jq -r ".\"$address\" // 0" "$POINTS_JSON")
@@ -1115,102 +1130,4 @@ view_logs() {
 # === 停止运行 ===
 stop_running() {
     validate_points_file
-    echo -e "${CYAN}🛑 正在停止跨链脚本和余额查询...${NC}"
-    pm2 stop "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >/dev/null 2>&1
-    pm2 delete "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >/dev/null 2>&1
-    echo -e "${GREEN}✅ 已停止所有脚本！🎉${NC}"
-}
-
-# === 删除脚本 ===
-delete_script() {
-    validate_points_file
-    echo -e "${RED}⚠️ 警告：将删除所有脚本和配置！继续？(y/n)${NC}"
-    read -p "> " confirm
-    if [ "$confirm" = "y" ] || [ "$confirm" = "Y" ]; then
-        pm2 stop "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >/dev/null 2>&1
-        pm2 delete "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >/dev/null 2>&1
-        rm -f "$ARB_SCRIPT" "$OP_SCRIPT" "$BALANCE_SCRIPT" "$CONFIG_FILE" "$DIRECTION_FILE" "$RPC_CONFIG_FILE" "$CONFIG_JSON" "$POINTS_JSON" "$POINTS_HASH_FILE" "$0"
-        echo -e "${GREEN}✅ 已删除所有文件！🎉${NC}"
-        exit 0
-    fi
-}
-
-# === 启动跨链脚本 ===
-start_bridge() {
-    validate_points_file
-    accounts=$(read_accounts)
-    if [ "$accounts" == "[]" ]; then
-        echo -e "${RED}❗ 请先添加账户！😢${NC}"
-        return
-    fi
-    while IFS= read -r account; do
-        address=$(echo "$account" | jq -r '.address' || python3 -c "from web3 import Web3; print(Web3(Web3.HTTPProvider('https://sepolia.unichain.org')).eth.account.from_key('$(echo "$account" | jq -r '.private_key')').address)" 2>/dev/null)
-        if [ -z "$address" ]; then
-            echo -e "${RED}❗ 无法计算账户 $(echo "$account" | jq -r '.name') 的地址😢${NC}"
-            return
-        fi
-        check_account_points "$address" 1
-        if [ $? -ne 0 ]; then
-            echo -e "${RED}❗ 无法启动跨链脚本：账户 $address 点数不足😢${NC}"
-            return
-        fi
-    done < <(echo "$accounts" | jq -c '.[]')
-    direction=$(cat "$DIRECTION_FILE")
-    case "$direction" in
-        "arb_to_uni")
-            pm2 start "$ARB_SCRIPT" --name "$PM2_PROCESS_NAME"
-            ;;
-        "op_to_uni")
-            pm2 start "$OP_SCRIPT" --name "$PM2_PROCESS_NAME"
-            ;;
-        *)
-            echo -e "${RED}❗ 无效的跨链方向：$direction😢${NC}"
-            return
-            ;;
-    esac
-    pm2 start "$BALANCE_SCRIPT" --name "$PM2_BALANCE_NAME"
-    echo -e "${GREEN}✅ 跨链脚本已启动！🎉${NC}"
-}
-
-# === 主菜单 ===
-main_menu() {
-    while true; do
-        banner
-        echo -e "${CYAN}🌟 请选择操作：${NC}"
-        echo "1. 配置 Telegram 🌐"
-        echo "2. 配置私钥 🔑"
-        echo "3. 充值点数 💸"
-        echo "4. 配置跨链方向 🌉"
-        echo "5. 启动跨链脚本 🚀"
-        echo "6. RPC 管理 ⚙️"
-        echo "7. 速度管理 ⏱️"
-        echo "8. 查看日志 📜"
-        echo "9. 停止运行 🛑"
-        echo "10. 删除脚本 🗑️"
-        echo "11. 退出 👋"
-        read -p "> " choice
-        case $choice in
-            1) manage_telegram ;;
-            2) manage_private_keys ;;
-            3) recharge_points ;;
-            4) select_direction ;;
-            5) start_bridge ;;
-            6) manage_rpc ;;
-            7) manage_speed ;;
-            8) view_logs ;;
-            9) stop_running ;;
-            10) delete_script ;;
-            11) echo -e "${CYAN}👋 再见！${NC}"; exit 0 ;;
-            *) echo -e "${RED}❗ 无效选项！😢${NC}" ;;
-        esac
-        read -p "按回车继续... ⏎"
-    done
-}
-
-# === 主程序 ===
-check_root
-install_dependencies
-download_python_scripts
-init_config
-main_menu
-</
+    echo -e "${CYAN}🛑
