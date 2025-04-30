@@ -1042,4 +1042,17 @@ update_python_accounts() {
     fi
     for script in "$ARB_SCRIPT" "$OP_SCRIPT"; do
         if [ ! -f "$script" ]; then
-            echo -e "${RED}❗ 错误
+            echo -e "${RED}❗ 错误：$script 不存在😢${NC}"
+            return 1
+        fi
+        if [ ! -w "$script" ]; then
+            echo -e "${RED}❗ 错误：$script 不可写，请检查权限😢${NC}"
+            return 1
+        fi
+        temp_file=$(mktemp)
+        cp "$script" "$temp_file" || {
+            echo -e "${RED}❗ 错误：无法备份 $script😢${NC}"
+            rm -f "$temp_file"
+            return 1
+        }
+        if
