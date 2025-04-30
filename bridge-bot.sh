@@ -71,7 +71,7 @@ install_dependencies() {
         curl -sL https://deb.nodesource.com/setup_16.x | bash -
         apt-get install -y nodejs && npm install -g pm2 || { echo -e "${RED}❗ 无法安装 PM2😢${NC}"; exit 1; }
     fi
-    for py_pkg in web3; do
+    for py_pkg in web3 cryptography python-telegram-bot; do
         if ! python3 -m pip show "$py_pkg" >/dev/null 2>&1; then
             echo -e "${CYAN}📦 安装 $py_pkg...🚚${NC}"
             pip3 install "$py_pkg" || { echo -e "${RED}❗ 无法安装 $py_pkg😢${NC}"; exit 1; }
@@ -103,9 +103,9 @@ init_config() {
     [ ! -f "$CONFIG_FILE" ] && echo '[]' > "$CONFIG_FILE" && echo -e "${GREEN}✅ 创建 $CONFIG_FILE 🎉${NC}"
     [ ! -f "$DIRECTION_FILE" ] && echo "arb_to_uni" > "$DIRECTION_FILE" && echo -e "${GREEN}✅ 默认方向: ARB -> UNI 🌉${NC}"
     [ ! -f "$RPC_CONFIG_FILE" ] && echo '{
-        "ARB_RPC_URLS": ["https://arbitrum-sepolia-rpc.publicnode.com", "https://sepolia-rollup.arbitrum.io/rpc", "https://arbitrum-sepolia.drpc.org", "https://endpoints.omniatech.io/v1/arbitrum/sepolia/public"],
-        "UNI_RPC_URLS": ["https://unichain-sepolia-rpc.publicnode.com", "https://unichain-sepolia.drpc.org", "https://sepolia.unichain.org"],
-        "OP_RPC_URLS": ["https://sepolia.optimism.io", "https://optimism-sepolia.drpc.org", "https://endpoints.omniatech.io/v1/op/sepolia/public", "https://rpc.therpc.io/optimism-sepolia"]
+        "ARB_RPC_URLS": ["https://sepolia-rollup.arbitrum.io/rpc", "https://endpoints.omniatech.io/v1/arbitrum/sepolia/public"],
+        "UNI_RPC_URLS": ["https://sepolia.unichain.org", "https://unichain-sepolia-rpc.publicnode.com"],
+        "OP_RPC_URLS": ["https://sepolia.optimism.io", "https://endpoints.omniatech.io/v1/op/sepolia/public", "https://rpc.therpc.io/optimism-sepolia"]
     }' > "$RPC_CONFIG_FILE" && echo -e "${GREEN}✅ 创建 $RPC_CONFIG_FILE ⚙️${NC}"
     [ ! -f "$CONFIG_JSON" ] && echo '{
         "REQUEST_INTERVAL": 0.5,
@@ -191,9 +191,9 @@ read_rpc_config() {
     if ! jq -e . "$RPC_CONFIG_FILE" >/dev/null 2>&1; then
         echo -e "${RED}❗ 警告：$RPC_CONFIG_FILE 格式无效，重置为默认配置😢${NC}"
         echo '{
-            "ARB_RPC_URLS": ["https://arbitrum-sepolia-rpc.publicnode.com", "https://sepolia-rollup.arbitrum.io/rpc", "https://arbitrum-sepolia.drpc.org", "https://endpoints.omniatech.io/v1/arbitrum/sepolia/public"],
-            "UNI_RPC_URLS": ["https://unichain-sepolia-rpc.publicnode.com", "https://unichain-sepolia.drpc.org", "https://sepolia.unichain.org"],
-            "OP_RPC_URLS": ["https://sepolia.optimism.io", "https://optimism-sepolia.drpc.org", "https://endpoints.omniatech.io/v1/op/sepolia/public", "https://rpc.therpc.io/optimism-sepolia"]
+            "ARB_RPC_URLS": ["https://sepolia-rollup.arbitrum.io/rpc", "https://endpoints.omniatech.io/v1/arbitrum/sepolia/public"],
+            "UNI_RPC_URLS": ["https://sepolia.unichain.org", "https://unichain-sepolia-rpc.publicnode.com"],
+            "OP_RPC_URLS": ["https://sepolia.optimism.io", "https://endpoints.omniatech.io/v1/op/sepolia/public", "https://rpc.therpc.io/optimism-sepolia"]
         }' > "$RPC_CONFIG_FILE"
         echo '{}'
         return
@@ -322,7 +322,7 @@ add_private_key() {
             echo -e "${RED}❗ 私钥 ${formatted_key:0:10}... 已存在，跳过😢${NC}"
             continue
         fi
-        address=$(python3 -c "from web3 import Web3; print(Web3(Web3.HTTPProvider('https://unichain-sepolia-rpc.publicnode.com')).eth.account.from_key('$formatted_key').address)" 2>/dev/null)
+        address=$(python3 -c "from web3 import Web3; print(Web3(Web3.HTTPProvider('https://sepolia.unichain.org')).eth.account.from_key('$formatted_key').address)" 2>/dev/null)
         if [ -z "$address" ]; then
             echo -e "${RED}❗ 无法计算私钥 ${formatted_key:0:10}... 的地址，跳过😢${NC}"
             continue
@@ -373,7 +373,7 @@ delete_private_key() {
         key=$(echo "$line" | jq -r '.private_key')
         address=$(echo "$line" | jq -r '.address')
         if [ -z "$address" ]; then
-            address=$(python3 -c "from web3 import Web3; print(Web3(Web3.HTTPProvider('https://unichain-sepolia-rpc.publicnode.com')).eth.account.from_key('$key').address)" 2>/dev/null)
+            address=$(python3 -c "from web3 import Web3; print(Web3(Web3.HTTPProvider('https://sepolia.unichain.org')).eth.account.from_key('$key').address)" 2>/dev/null)
         fi
         if [ -n "$name" ] && [ -n "$key" ] && [ -n "$address" ]; then
             op_balance=$(get_account_balance "$address" "OP")
@@ -446,7 +446,7 @@ view_private_keys() {
         key=$(echo "$line" | jq -r '.private_key')
         address=$(echo "$line" | jq -r '.address')
         if [ -z "$address" ]; then
-            address=$(python3 -c "from web3 import Web3; print(Web3(Web3.HTTPProvider('https://unichain-sepolia-rpc.publicnode.com')).eth.account.from_key('$key').address)" 2>/dev/null)
+            address=$(python3 -c "from web3 import Web3; print(Web3(Web3.HTTPProvider('https://sepolia.unichain.org')).eth.account.from_key('$key').address)" 2>/dev/null)
         fi
         if [ -n "$name" ] && [ -n "$key" ] && [ -n "$address" ]; then
             op_balance=$(get_account_balance "$address" "OP")
@@ -585,7 +585,7 @@ recharge_points() {
         key=$(echo "$line" | jq -r '.private_key')
         address=$(echo "$line" | jq -r '.address')
         if [ -z "$address" ]; then
-            address=$(python3 -c "from web3 import Web3; print(Web3(Web3.HTTPProvider('https://unichain-sepolia-rpc.publicnode.com')).eth.account.from_key('$key').address)" 2>/dev/null)
+            address=$(python3 -c "from web3 import Web3; print(Web3(Web3.HTTPProvider('https://sepolia.unichain.org')).eth.account.from_key('$key').address)" 2>/dev/null)
             if [ -z "$address" ]; then
                 echo -e "${RED}❗ 无法计算账户 $name 的地址，跳过😢${NC}"
                 continue
@@ -624,7 +624,7 @@ recharge_points() {
     account=$(echo "${accounts_list[$((index-1))]}" | jq -r '.private_key')
     address=$(echo "${accounts_list[$((index-1))]}" | jq -r '.address')
     if [ -z "$address" ] || [ "$address" == "null" ]; then
-        address=$(python3 -c "from web3 import Web3; print(Web3(Web3.HTTPProvider('https://unichain-sepolia-rpc.publicnode.com')).eth.account.from_key('$account').address)" 2>/dev/null)
+        address=$(python3 -c "from web3 import Web3; print(Web3(Web3.HTTPProvider('https://sepolia.unichain.org')).eth.account.from_key('$account').address)" 2>/dev/null)
         if [ -z "$address" ]; then
             echo -e "${RED}❗ 无法计算账户地址！😢${NC}"
             return
@@ -1100,4 +1100,112 @@ select_direction() {
 }
 
 # === 查看日志 ===
-view
+view_logs() {
+    validate_points_file
+    echo -e "${CYAN}📜 显示 PM2 日志...${NC}"
+    pm2 logs --lines 50
+    echo -e "${CYAN}✅ 日志显示完成，按回车返回 ⏎${NC}"
+    read -p "按回车继续... ⏎"
+}
+
+# === 停止运行 ===
+stop_running() {
+    validate_points_file
+    echo -e "${CYAN}🛑 正在停止跨链脚本和余额查询...${NC}"
+    pm2 stop "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >/dev/null 2>&1
+    pm2 delete "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >/dev/null 2>&1
+    echo -e "${GREEN}✅ 已停止所有脚本！🎉${NC}"
+}
+
+# === 删除脚本 ===
+delete_script() {
+    validate_points_file
+    echo -e "${RED}⚠️ 警告：将删除所有脚本和配置！继续？(y/n)${NC}"
+    read -p "> " confirm
+    if [ "$confirm" = "y" ] || [ "$confirm" = "Y" ]; then
+        pm2 stop "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >/dev/null 2>&1
+        pm2 delete "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >/dev/null 2>&1
+        rm -f "$ARB_SCRIPT" "$OP_SCRIPT" "$BALANCE_SCRIPT" "$CONFIG_FILE" "$DIRECTION_FILE" "$RPC_CONFIG_FILE" "$CONFIG_JSON" "$POINTS_JSON" "$POINTS_HASH_FILE" "$0"
+        echo -e "${GREEN}✅ 已删除所有文件！🎉${NC}"
+        exit 0
+    fi
+}
+
+# === 启动跨链脚本 ===
+start_bridge() {
+    validate_points_file
+    accounts=$(read_accounts)
+    if [ "$accounts" == "[]" ]; then
+        echo -e "${RED}❗ 请先添加账户！😢${NC}"
+        return
+    fi
+    while IFS= read -r account; do
+        address=$(echo "$account" | jq -r '.address' || python3 -c "from web3 import Web3; print(Web3(Web3.HTTPProvider('https://sepolia.unichain.org')).eth.account.from_key('$(echo "$account" | jq -r '.private_key')').address)" 2>/dev/null)
+        if [ -z "$address" ]; then
+            echo -e "${RED}❗ 无法计算账户 $(echo "$account" | jq -r '.name') 的地址😢${NC}"
+            return
+        fi
+        check_account_points "$address" 1
+        if [ $? -ne 0 ]; then
+            echo -e "${RED}❗ 无法启动跨链脚本：账户 $address 点数不足😢${NC}"
+            return
+        fi
+    done < <(echo "$accounts" | jq -c '.[]')
+    direction=$(cat "$DIRECTION_FILE")
+    case "$direction" in
+        "arb_to_uni")
+            pm2 start "$ARB_SCRIPT" --name "$PM2_PROCESS_NAME"
+            ;;
+        "op_to_uni")
+            pm2 start "$OP_SCRIPT" --name "$PM2_PROCESS_NAME"
+            ;;
+        *)
+            echo -e "${RED}❗ 无效的跨链方向：$direction😢${NC}"
+            return
+            ;;
+    esac
+    pm2 start "$BALANCE_SCRIPT" --name "$PM2_BALANCE_NAME"
+    echo -e "${GREEN}✅ 跨链脚本已启动！🎉${NC}"
+}
+
+# === 主菜单 ===
+main_menu() {
+    while true; do
+        banner
+        echo -e "${CYAN}🌟 请选择操作：${NC}"
+        echo "1. 配置 Telegram 🌐"
+        echo "2. 配置私钥 🔑"
+        echo "3. 充值点数 💸"
+        echo "4. 配置跨链方向 🌉"
+        echo "5. 启动跨链脚本 🚀"
+        echo "6. RPC 管理 ⚙️"
+        echo "7. 速度管理 ⏱️"
+        echo "8. 查看日志 📜"
+        echo "9. 停止运行 🛑"
+        echo "10. 删除脚本 🗑️"
+        echo "11. 退出 👋"
+        read -p "> " choice
+        case $choice in
+            1) manage_telegram ;;
+            2) manage_private_keys ;;
+            3) recharge_points ;;
+            4) select_direction ;;
+            5) start_bridge ;;
+            6) manage_rpc ;;
+            7) manage_speed ;;
+            8) view_logs ;;
+            9) stop_running ;;
+            10) delete_script ;;
+            11) echo -e "${CYAN}👋 再见！${NC}"; exit 0 ;;
+            *) echo -e "${RED}❗ 无效选项！😢${NC}" ;;
+        esac
+        read -p "按回车继续... ⏎"
+    done
+}
+
+# === 主程序 ===
+check_root
+install_dependencies
+download_python_scripts
+init_config
+main_menu
