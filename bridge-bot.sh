@@ -209,13 +209,15 @@ recharge_points() {
 
     # 检查是否有私钥
     accounts=$(read_accounts)
-    if [ "$(echo "$accounts" | jq 'length')" -eq 0 ]; then
+    if [ "$(echo "$accounts" | jq 'length')" -eq 0 ]
+    then
         print_message "$RED" "❗ 请先添加私钥！😢"
         read -p "按回车继续... ⏎"
         return
     fi
 
-    while true; do
+    while true
+    do
         clear
         banner
         print_message "$CYAN" "💰 充值点数"
