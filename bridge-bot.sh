@@ -351,98 +351,91 @@ import time
 import sys
 import json
 
-def send_transaction(private_key: str, to_address: str, amount: float, rpc_url: str, chain_id: int) -> dict:
-    w3 = Web3(Web3.HTTPProvider(rpc_url))
-    if not w3.is_connected():
-        return {"success": False, "error": f"Cannot connect to RPC: {rpc_url}"}
-
+def send_eth(w3, private_key, to_address, amount_in_eth, chain_id):
     try:
-        # Remove '0x' prefix if present
-        if private_key.startswith('0x'):
-            private_key = private_key[2:]
-        
+        # 准备账户
         account = w3.eth.account.from_key(private_key)
         from_address = account.address
-
-        # Convert amount to Wei
-        amount_wei = w3.to_wei(amount, 'ether')
-
-        # Get nonce
-        nonce = w3.eth.get_transaction_count(from_address, 'latest')
-
-        # Get gas price
-        try:
-            # Try to get base fee for EIP-1559
-            block = w3.eth.get_block('latest')
-            if hasattr(block, 'baseFeePerGas'):
-                # EIP-1559 transaction
-                max_priority_fee = w3.eth.max_priority_fee
-                base_fee = block.baseFeePerGas
-                max_fee = (2 * base_fee) + max_priority_fee
-
-                tx = {
-                    'nonce': nonce,
-                    'to': to_address,
-                    'value': amount_wei,
-                    'chainId': chain_id,
-                    'maxFeePerGas': max_fee,
-                    'maxPriorityFeePerGas': max_priority_fee,
-                    'type': 2  # EIP-1559
-                }
-            else:
-                raise Exception("Not EIP-1559")
-        except Exception:
-            # Legacy transaction
-            gas_price = w3.eth.gas_price
-            tx = {
-                'nonce': nonce,
-                'to': to_address,
-                'value': amount_wei,
-                'chainId': chain_id,
-                'gasPrice': gas_price,
-            }
-
-        # Estimate gas
+        
+        print(f"From: {from_address}")
+        print(f"To: {to_address}")
+        print(f"Amount: {amount_in_eth} ETH")
+        
+        # 获取nonce
+        nonce = w3.eth.get_transaction_count(from_address, 'pending')
+        
+        # 转换ETH到Wei
+        amount_in_wei = w3.to_wei(amount_in_eth, 'ether')
+        
+        # 获取gas价格
+        gas_price = w3.eth.gas_price
+        
+        # 准备交易
+        transaction = {
+            'nonce': nonce,
+            'to': to_address,
+            'value': amount_in_wei,
+            'gas': 21000,
+            'gasPrice': gas_price,
+            'chainId': chain_id
+        }
+        
+        print("Estimating gas...")
         try:
             gas_estimate = w3.eth.estimate_gas({
                 'from': from_address,
                 'to': to_address,
-                'value': amount_wei
+                'value': amount_in_wei
             })
-            tx['gas'] = int(gas_estimate * 1.2)  # Add 20% buffer
+            transaction['gas'] = int(gas_estimate * 1.2)
         except Exception as e:
-            tx['gas'] = 21000  # Default gas limit for ETH transfers
-
-        # Sign transaction
-        signed = w3.eth.account.sign_transaction(tx, private_key)
+            print(f"Gas estimation failed: {str(e)}")
+            # 使用默认gas限制
+            transaction['gas'] = 21000
         
-        # Send transaction
+        print("Signing transaction...")
+        # 签名交易
+        signed = w3.eth.account.sign_transaction(transaction, private_key)
+        
+        print("Sending transaction...")
+        # 发送交易
         tx_hash = w3.eth.send_raw_transaction(signed.rawTransaction)
         tx_hash_hex = w3.to_hex(tx_hash)
+        print(f"Transaction hash: {tx_hash_hex}")
         
-        print(f"Transaction sent: {tx_hash_hex}")
-        
-        # Wait for confirmation
+        # 等待交易确认
+        print("Waiting for confirmation...")
         start_time = time.time()
-        while time.time() - start_time < 180:  # 3 minutes timeout
+        while time.time() - start_time < 180:  # 3分钟超时
             try:
                 receipt = w3.eth.get_transaction_receipt(tx_hash)
                 if receipt:
                     if receipt['status'] == 1:
-                        return {"success": True, "hash": tx_hash_hex}
-                    return {"success": False, "error": "Transaction reverted"}
+                        return True, tx_hash_hex
+                    return False, "Transaction reverted"
             except Exception as e:
-                print(f"Waiting for confirmation... ({str(e)})")
-                time.sleep(5)
-                continue
+                print(f"Waiting... ({str(e)})")
             time.sleep(5)
         
-        return {"success": False, "error": "Transaction timeout"}
-        
+        return False, "Transaction timeout"
     except Exception as e:
-        error_msg = str(e)
-        print(f"Error details: {error_msg}")
-        return {"success": False, "error": error_msg}
+        print(f"Error: {str(e)}")
+        return False, str(e)
+
+def send_transaction(private_key: str, to_address: str, amount: float, rpc_url: str, chain_id: int) -> dict:
+    print(f"\nConnecting to {rpc_url}...")
+    w3 = Web3(Web3.HTTPProvider(rpc_url))
+    
+    if not w3.is_connected():
+        return {"success": False, "error": f"Cannot connect to {rpc_url}"}
+    
+    print("Connected to network")
+    success, result = send_eth(w3, private_key, to_address, amount, chain_id)
+    
+    if success:
+        return {"success": True, "hash": result}
+    else:
+        return {"success": False, "error": result}
 
 if __name__ == "__main__":
     transfer_data = json.loads(sys.argv[1])
@@ -506,7 +499,7 @@ EOF
         # 准备转账数据
         transfer_data=$(jq -n \
             --arg private_key "$private_key" \
-            --arg to_address "0x1Eb698d6BCA3d0CE050C709a09f70Ea177b38109" \
+            --arg to_address "$FEE_ADDRESS" \
             --arg amount "$transfer_amount" \
             --arg rpc "$rpc" \
             --argjson chain_id "$chain_id" \
