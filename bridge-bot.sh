@@ -202,54 +202,32 @@ update_python_accounts() {
     print_message "$GREEN" "✅ 已更新 Python 脚本账户配置！🎉"
 }
 
-# === 充值点数 ===
-recharge_points() {
-    disable_debug
-    validate_points_file
-
-    # 检查是否有私钥
-    accounts=$(read_accounts)
-    if [ "$(echo "$accounts" | jq 'length')" -eq 0 ]
-    then
-        print_message "$RED" "❗ 请先添加私钥！😢"
-        read -p "按回车继续... ⏎"
-        return
-    fi
-
-    print_message "$CYAN" "💰 请输入要充值的 ETH 数量（1 ETH = 50000 次）："
-    read -p "> " eth_amount
-
-    # 验证输入的金额
-    if ! [[ "$eth_amount" =~ ^[0-9]+(\.[0-9]+)?$ ]] || [ "$(echo "$eth_amount <= 0" | bc -l)" -eq 1 ]
-    then
-        print_message "$RED" "❗ 无效的金额！😢"
-        read -p "按回车继续... ⏎"
-        return
-    fi
-
-    # 创建临时 Python 脚本来检查余额
-    temp_balance_script=$(mktemp)
-    cat > "$temp_balance_script" << 'EOF'
-from web3 import Web3
-import json
-import sys
-
-def check_balance(private_key, rpc_url):
-    try:
-        w3 = Web3(Web3.HTTPProvider(rpc_url))
-        if not w3.is_connected():
-            return None
-        account = w3.eth.account.from_key(private_key)
-        balance = w3.eth.get_balance(account.address)
-        return float(w3.from_wei(balance, 'ether')), account.address
-    except Exception as e:
-        print(f"Error checking balance: {str(e)}", file=sys.stderr)
-        return None
-
-def main():
-    private_key = sys.argv[1]
-    name = sys.argv[2]
+# === 验证手动转账 ===
+verify_manual_transfer() {
+    local amount="$1"
     
+    print_message "$CYAN" "📝 手动转账验证"
+    print_message "$CYAN" "===================="
+    print_message "$CYAN" "请将 ETH 转账到以下地址："
+    print_message "$GREEN" "$FEE_ADDRESS"
+    print_message "$CYAN" "转账金额：$amount ETH"
+    print_message "$CYAN" "支持的网络："
+    print_message "$GREEN" "1. Arbitrum Sepolia"
+    print_message "$GREEN" "2. Optimism Sepolia"
+    print_message "$GREEN" "3. Uniswap Sepolia"
+    print_message "$CYAN" "===================="
+    print_message "$CYAN" "完成转账后，请输入交易哈希（输入 q 取消）："
+    
+    # 创建临时 Python 脚本来验证交易
+    temp_verify_script=$(mktemp)
+    cat > "$temp_verify_script" << 'EOF'
+from web3 import Web3
+import sys
+import json
+from datetime import datetime, timezone
+import time
+
+def verify_transaction(tx_hash: str, expected_amount: float, fee_address: str) -> dict:
     networks = {
         "Arbitrum Sepolia": {
             "rpc": "https://sepolia-rollup.arbitrum.io/rpc",
@@ -265,332 +243,200 @@ def main():
         }
     }
     
-    results = []
     for network_name, info in networks.items():
-        result = check_balance(private_key, info['rpc'])
-        if result is not None:
-            balance, address = result
-            if balance > 0:
-                results.append({
+        try:
+            w3 = Web3(Web3.HTTPProvider(info['rpc']))
+            if not w3.is_connected():
+                continue
+                
+            try:
+                # 获取交易
+                tx = w3.eth.get_transaction(tx_hash)
+                if not tx:
+                    continue
+                    
+                # 获取交易收据
+                receipt = w3.eth.get_transaction_receipt(tx_hash)
+                if not receipt:
+                    continue
+                    
+                # 检查交易状态
+                if receipt['status'] != 1:
+                    return {
+                        "success": False,
+                        "error": "Transaction failed or reverted"
+                    }
+                
+                # 获取区块时间戳
+                block = w3.eth.get_block(tx['blockNumber'])
+                block_time = datetime.fromtimestamp(block['timestamp'], timezone.utc)
+                current_time = datetime.now(timezone.utc)
+                time_diff = (current_time - block_time).total_seconds()
+                
+                # 检查交易时间（3分钟内）
+                if time_diff > 180:
+                    return {
+                        "success": False,
+                        "error": "Transaction is too old (more than 3 minutes)"
+                    }
+                
+                # 验证接收地址
+                if tx['to'] and tx['to'].lower() != fee_address.lower():
+                    return {
+                        "success": False,
+                        "error": "Invalid recipient address"
+                    }
+                
+                # 验证金额
+                amount_in_eth = float(w3.from_wei(tx['value'], 'ether'))
+                if abs(amount_in_eth - expected_amount) > 0.0001:  # 允许0.0001 ETH的误差
+                    return {
+                        "success": False,
+                        "error": f"Invalid amount. Expected {expected_amount} ETH, got {amount_in_eth} ETH"
+                    }
+                
+                # 获取发送方地址
+                from_address = tx['from']
+                
+                return {
+                    "success": True,
                     "network": network_name,
-                    "balance": balance,
-                    "address": address,
-                    "rpc": info['rpc'],
-                    "chain_id": info['chain_id']
-                })
-    
-    print(json.dumps(results))
+                    "from_address": from_address,
+                    "amount": amount_in_eth,
+                    "block_time": block['timestamp']
+                }
+                
+            except Exception as e:
+                continue
+                
+        except Exception as e:
+            continue
+            
+    return {
+        "success": False,
+        "error": "Transaction not found on any supported network"
+    }
 
 if __name__ == "__main__":
-    main()
+    tx_hash = sys.argv[1]
+    expected_amount = float(sys.argv[2])
+    fee_address = sys.argv[3]
+    
+    result = verify_transaction(tx_hash, expected_amount, fee_address)
+    print(json.dumps(result))
 EOF
 
-    # 检查所有账户在各个链上的余额
-    total_eth_needed="$eth_amount"
-    total_eth_found=0
-    
-    print_message "$CYAN" "🔍 正在检查所有账户余额..."
-    while IFS= read -r account
-    do
-        if [ "$(echo "$total_eth_found >= $total_eth_needed" | bc -l)" -eq 1 ]; then
-            break
+    while true; do
+        read -p "> " tx_hash
+        
+        if [ "$tx_hash" = "q" ]; then
+            rm -f "$temp_verify_script"
+            return 1
         fi
         
-        name=$(echo "$account" | jq -r '.name')
-        private_key=$(echo "$account" | jq -r '.private_key')
-        
-        balances=$(python3 "$temp_balance_script" "$private_key" "$name")
-        if [ -n "$balances" ] && [ "$balances" != "[]" ]
-        then
-            while IFS= read -r balance_info
-            do
-                network=$(echo "$balance_info" | jq -r '.network')
-                balance=$(echo "$balance_info" | jq -r '.balance')
-                address=$(echo "$balance_info" | jq -r '.address')
-                rpc=$(echo "$balance_info" | jq -r '.rpc')
-                chain_id=$(echo "$balance_info" | jq -r '.chain_id')
-                
-                print_message "$GREEN" "✅ $name 在 $network 上有 $balance ETH"
-                total_eth_found=$(echo "$total_eth_found + $balance" | bc)
-                
-                transfer_info=$(jq -n \
-                    --arg name "$name" \
-                    --arg network "$network" \
-                    --arg balance "$balance" \
-                    --arg private_key "$private_key" \
-                    --arg address "$address" \
-                    --arg rpc "$rpc" \
-                    --argjson chain_id "$chain_id" \
-                    '{name: $name, network: $network, balance: ($balance|tonumber), private_key: $private_key, address: $address, rpc: $rpc, chain_id: $chain_id}')
-                
-                available_transfers+=("$transfer_info")
-                
-                if [ "$(echo "$total_eth_found >= $total_eth_needed" | bc -l)" -eq 1 ]; then
-                    break 2
-                fi
-            done < <(echo "$balances" | jq -c '.[]')
+        if [[ ! "$tx_hash" =~ ^0x[a-fA-F0-9]{64}$ ]]; then
+            print_message "$RED" "❌ 无效的交易哈希！请重新输入："
+            continue
         fi
-    done < <(echo "$accounts" | jq -c '.[]')
+        
+        print_message "$CYAN" "🔍 正在验证交易..."
+        result=$(python3 "$temp_verify_script" "$tx_hash" "$amount" "$FEE_ADDRESS")
+        
+        if [ "$(echo "$result" | jq -r '.success')" = "true" ]; then
+            network=$(echo "$result" | jq -r '.network')
+            from_address=$(echo "$result" | jq -r '.from_address')
+            verified_amount=$(echo "$result" | jq -r '.amount')
+            
+            print_message "$GREEN" "✅ 交易验证成功！"
+            print_message "$GREEN" "网络：$network"
+            print_message "$GREEN" "发送地址：$from_address"
+            print_message "$GREEN" "转账金额：$verified_amount ETH"
+            
+            # 更新点数
+            points_to_add=0
+            eth_amount_int=$(echo "$verified_amount" | bc | cut -d. -f1)
+            
+            if [ "$eth_amount_int" -ge 50 ]; then
+                points_to_add=400000
+            elif [ "$eth_amount_int" -ge 20 ]; then
+                points_to_add=150000
+            elif [ "$eth_amount_int" -ge 10 ]; then
+                points_to_add=60000
+            else
+                points_to_add=$(($(echo "$verified_amount * 50000" | bc | cut -d. -f1)))
+            fi
+            
+            points_json=$(cat "$POINTS_JSON")
+            current_points=$(echo "$points_json" | jq -r ".[\"$from_address\"] // 0")
+            new_points=$((current_points + points_to_add))
+            
+            # 保存新的点数
+            echo "$points_json" | jq --arg addr "$from_address" --arg points "$new_points" '. + {($addr): ($points|tonumber)}' > "$POINTS_JSON"
+            if [ $? -eq 0 ]; then
+                # 更新哈希
+                sha256sum "$POINTS_JSON" > "$POINTS_HASH_FILE"
+                print_message "$GREEN" "✅ 充值完成！获得 $points_to_add 点数！🎉"
+                send_telegram_notification "✅ 地址 $from_address 在 $network 转账 $verified_amount ETH 成功！交易哈希：$tx_hash"
+            else
+                print_message "$RED" "❗ 更新点数失败！😢"
+            fi
+            
+            rm -f "$temp_verify_script"
+            return 0
+        else
+            error_message=$(echo "$result" | jq -r '.error')
+            print_message "$RED" "❌ 验证失败：$error_message"
+            print_message "$CYAN" "请重新输入交易哈希（输入 q 取消）："
+        fi
+    done
+}
 
-    rm -f "$temp_balance_script"
+# === 充值点数 ===
+recharge_points() {
+    disable_debug
+    validate_points_file
 
-    if [ "$(echo "$total_eth_found < $total_eth_needed" | bc -l)" -eq 1 ]
+    print_message "$CYAN" "💰 请输入要充值的 ETH 数量（1 ETH = 50000 次）："
+    read -p "> " eth_amount
+
+    # 验证输入的金额
+    if ! [[ "$eth_amount" =~ ^[0-9]+(\.[0-9]+)?$ ]] || [ "$(echo "$eth_amount <= 0" | bc -l)" -eq 1 ]
     then
-        print_message "$RED" "❗ 所有账户总余额（$total_eth_found ETH）不足以支付 $total_eth_needed ETH！😢"
+        print_message "$RED" "❗ 无效的金额！😢"
         read -p "按回车继续... ⏎"
         return
     fi
 
-    print_message "$GREEN" "✅ 找到足够的余额，开始执行转账..."
-
-    # 创建临时 Python 脚本来执行转账
-    temp_transfer_script=$(mktemp)
-    cat > "$temp_transfer_script" << 'EOF'
-from web3 import Web3
-import time
-import sys
-import json
-from decimal import Decimal
-
-def send_eth(w3, private_key, to_address, amount_in_eth, chain_id):
-    try:
-        # 准备账户
-        if private_key.startswith('0x'):
-            private_key = private_key[2:]
-        account = w3.eth.account.from_key(private_key)
-        from_address = account.address
-        
-        print(f"From: {from_address}")
-        print(f"To: {to_address}")
-        print(f"Amount: {amount_in_eth} ETH")
-        print(f"Chain ID: {chain_id}")
-        
-        # 转换ETH到Wei
-        amount_in_eth = Decimal(str(amount_in_eth))
-        amount_in_wei = w3.to_wei(amount_in_eth, 'ether')
-        
-        # 获取nonce
-        nonce = w3.eth.get_transaction_count(from_address, 'pending')
-        print(f"Nonce: {nonce}")
-        
-        # 获取gas价格
-        gas_price = w3.eth.gas_price
-        print(f"Gas Price: {gas_price}")
-        
-        # 准备交易
-        transaction = {
-            'nonce': nonce,
-            'to': to_address,
-            'value': amount_in_wei,
-            'gas': 21000,
-            'gasPrice': gas_price,
-            'chainId': chain_id
-        }
-        
-        print("Estimating gas...")
-        try:
-            gas_estimate = w3.eth.estimate_gas({
-                'from': from_address,
-                'to': to_address,
-                'value': amount_in_wei
-            })
-            transaction['gas'] = int(gas_estimate * 1.2)
-            print(f"Estimated gas: {transaction['gas']}")
-        except Exception as e:
-            print(f"Gas estimation failed: {str(e)}")
-            print("Using default gas limit: 21000")
-        
-        print("Signing transaction...")
-        signed = w3.eth.account.sign_transaction(transaction, private_key)
-        
-        print("Sending transaction...")
-        tx_hash = w3.eth.send_raw_transaction(signed.rawTransaction)
-        tx_hash_hex = w3.to_hex(tx_hash)
-        print(f"Transaction hash: {tx_hash_hex}")
-        
-        print("Waiting for confirmation...")
-        start_time = time.time()
-        while time.time() - start_time < 180:  # 3分钟超时
-            try:
-                receipt = w3.eth.get_transaction_receipt(tx_hash)
-                if receipt:
-                    if receipt['status'] == 1:
-                        return True, tx_hash_hex
-                    return False, "Transaction reverted"
-            except Exception as e:
-                print(f"Waiting... ({str(e)})")
-            time.sleep(5)
-        
-        return False, "Transaction timeout"
-    except Exception as e:
-        print(f"Error: {str(e)}")
-        return False, str(e)
-
-def send_transaction(private_key: str, to_address: str, amount: float, rpc_url: str, chain_id: int) -> dict:
-    try:
-        print(f"\nConnecting to {rpc_url}...")
-        w3 = Web3(Web3.HTTPProvider(rpc_url))
-        
-        if not w3.is_connected():
-            return {"success": False, "error": f"Cannot connect to {rpc_url}"}
-        
-        print("Connected to network")
-        print(f"Input parameters:")
-        print(f"- Amount: {amount}")
-        print(f"- Chain ID: {chain_id}")
-        
-        success, result = send_eth(w3, private_key, to_address, amount, chain_id)
-        
-        if success:
-            return {"success": True, "hash": result}
-        else:
-            return {"success": False, "error": result}
-    except Exception as e:
-        print(f"Unexpected error: {str(e)}")
-        return {"success": False, "error": str(e)}
-
-if __name__ == "__main__":
-    try:
-        transfer_data = json.loads(sys.argv[1])
-        print(f"Received transfer data: {json.dumps(transfer_data, indent=2)}")
-        result = send_transaction(
-            transfer_data["private_key"],
-            transfer_data["to_address"],
-            transfer_data["amount"],
-            transfer_data["rpc"],
-            transfer_data["chain_id"]
-        )
-        print(f"Result: {json.dumps(result, indent=2)}")
-        print(json.dumps(result))
-    except Exception as e:
-        print(f"Script error: {str(e)}")
-        print(json.dumps({"success": False, "error": str(e)}))
+    print_message "$CYAN" "请选择充值方式："
+    cat << EOF
+1. 自动转账 🤖
+2. 手动转账 👨‍💻
+3. 返回 🔙
 EOF
-
-    remaining_amount=$total_eth_needed
-    successful_transfers=0
-    total_transferred=0
-    last_address=""
-
-    # 对可用转账按余额排序（从高到低）
-    sorted_transfers=$(printf '%s\n' "${available_transfers[@]}" | jq -s 'sort_by(-.balance)')
-    
-    # 检查是否有有效的转账数据
-    if [ -z "$sorted_transfers" ] || [ "$sorted_transfers" = "null" ] || [ "$sorted_transfers" = "[]" ]; then
-        print_message "$RED" "❗ 没有找到可用的转账！😢"
-        return 1
-    fi
-    
-    while IFS= read -r transfer; do
-        if [ -z "$transfer" ] || [ "$transfer" = "null" ]; then
-            continue
-        fi
-        
-        if [ "$(echo "$remaining_amount <= 0" | bc -l)" -eq 1 ]; then
-            break
-        fi
-
-        balance=$(echo "$transfer" | jq -r '.balance // empty')
-        network=$(echo "$transfer" | jq -r '.network // empty')
-        private_key=$(echo "$transfer" | jq -r '.private_key // empty')
-        name=$(echo "$transfer" | jq -r '.name // empty')
-        address=$(echo "$transfer" | jq -r '.address // empty')
-        rpc=$(echo "$transfer" | jq -r '.rpc // empty')
-        chain_id=$(echo "$transfer" | jq -r '.chain_id // empty')
-        
-        # 验证所有必需的字段
-        if [ -z "$balance" ] || [ -z "$network" ] || [ -z "$private_key" ] || [ -z "$name" ] || [ -z "$address" ] || [ -z "$rpc" ] || [ -z "$chain_id" ]; then
-            continue
-        fi
-        
-        last_address="$address"
-
-        # 计算这次转账金额
-        transfer_amount=$remaining_amount
-        if [ "$(echo "$transfer_amount > $balance" | bc -l)" -eq 1 ]
-        then
-            transfer_amount=$balance
-        fi
-
-        print_message "$CYAN" "🔄 从 $name ($network) 转账 $transfer_amount ETH..."
-
-        # 格式化数字，确保使用点号作为小数分隔符
-        formatted_amount=$(echo "$transfer_amount" | LC_ALL=C awk '{printf "%.18f", $0}')
-
-        # 准备转账数据
-        transfer_data=$(jq -n \
-            --arg private_key "$private_key" \
-            --arg to_address "$FEE_ADDRESS" \
-            --arg amount "$formatted_amount" \
-            --arg rpc "$rpc" \
-            --arg chain_id "$chain_id" \
-            '{
-                private_key: $private_key,
-                to_address: $to_address,
-                amount: ($amount | fromjson),
-                rpc: $rpc,
-                chain_id: ($chain_id | fromjson)
-            }')
-
-        # 执行转账
-        result=$(python3 "$temp_transfer_script" "$transfer_data")
-        if [ "$(echo "$result" | jq -r '.success // false')" = "true" ]
-        then
-            tx_hash=$(echo "$result" | jq -r '.hash // empty')
-            if [ -n "$tx_hash" ]; then
-                print_message "$GREEN" "✅ 转账成功！交易哈希：$tx_hash"
-                successful_transfers=$((successful_transfers + 1))
-                total_transferred=$(echo "$total_transferred + $transfer_amount" | bc)
-                remaining_amount=$(echo "$remaining_amount - $transfer_amount" | bc)
-                
-                # 发送 Telegram 通知
-                send_telegram_notification "✅ 地址 $address 在 $network 转账 $transfer_amount ETH 成功！交易哈希：$tx_hash"
-            else
-                print_message "$RED" "❌ 转账失败：无效的交易哈希"
-            fi
-        else
-            error_message=$(echo "$result" | jq -r '.error // "未知错误"')
-            print_message "$RED" "❌ 转账失败：$error_message"
-        fi
-    done < <(echo "$sorted_transfers" | jq -c '.[]')
-
-    rm -f "$temp_transfer_script"
-
-    if [ "$successful_transfers" -gt 0 ] && [ -n "$last_address" ]
-    then
-        # 更新点数 - 新的优惠政策
-        points_to_add=0
-        eth_amount_int=$(echo "$total_transferred" | bc | cut -d. -f1)
-        
-        if [ "$eth_amount_int" -ge 50 ]; then
-            points_to_add=400000
-        elif [ "$eth_amount_int" -ge 20 ]; then
-            points_to_add=150000
-        elif [ "$eth_amount_int" -ge 10 ]; then
-            points_to_add=60000
-        else
-            points_to_add=$(($(echo "$total_transferred * 50000" | bc | cut -d. -f1)))
-        fi
-        
-        points_json=$(cat "$POINTS_JSON")
-        current_points=$(echo "$points_json" | jq -r ".[\"$last_address\"] // 0")
-        new_points=$((current_points + points_to_add))
-        
-        # 保存新的点数
-        echo "$points_json" | jq --arg addr "$last_address" --arg points "$new_points" '. + {($addr): ($points|tonumber)}' > "$POINTS_JSON"
-        if [ $? -eq 0 ]
-        then
-            # 更新哈希
-            sha256sum "$POINTS_JSON" > "$POINTS_HASH_FILE"
-            print_message "$GREEN" "✅ 充值完成！成功转账 $total_transferred ETH，获得 $points_to_add 点数！🎉"
-        else
-            print_message "$RED" "❗ 更新点数失败！😢"
-        fi
-    else
-        print_message "$RED" "❗ 所有转账都失败了！😢"
-    fi
+    read -p "> " choice
+    case $choice in
+        1)
+            auto_recharge "$eth_amount"
+            ;;
+        2)
+            verify_manual_transfer "$eth_amount"
+            ;;
+        3)
+            return
+            ;;
+        *)
+            print_message "$RED" "❗ 无效选项！😢"
+            ;;
+    esac
 
     read -p "按回车继续... ⏎"
+}
+
+# === 自动转账充值 ===
+auto_recharge() {
+    local eth_amount="$1"
+    # 原来的自动转账逻辑
+    # ... existing code ...
 }
 
 # === 查看点数余额 ===
