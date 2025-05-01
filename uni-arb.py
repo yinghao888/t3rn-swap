@@ -5,55 +5,136 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 import os
 import json
-import requests
 
 # === ANSI 颜色代码 ===
 LIGHT_BLUE = "\033[96m"
 LIGHT_RED = "\033[95m"
 RESET = "\033[0m"
 
-# === 账户配置（由脚本动态更新）===
-ACCOUNTS = []
-
 # === 配置日志 ===
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
 logger = logging.getLogger()
 
-# === RPC 配置（由脚本动态更新）===
-ARB_RPC = ""
-UNI_RPC = ""
+# 从 config.json 加载配置
+with open("config.json", "r") as f:
+    config = json.load(f)
+REQUEST_INTERVAL = config["REQUEST_INTERVAL"]
+AMOUNT_ETH = config["AMOUNT_ETH"]
+UNI_TO_ARB_DATA_TEMPLATE = config["UNI_TO_ARB_DATA_TEMPLATE"]
+ARB_TO_UNI_DATA_TEMPLATE = config["ARB_TO_UNI_DATA_TEMPLATE"]
 
-# === 合约地址 ===
-OP_CONTRACT_ADDRESS = "0xb6Def636914Ae60173d9007E732684a9eEDEF26E"
-ARB_CONTRACT_ADDRESS = "0x1cEAb5967E5f078Fa0FEC3DFfD0394Af1fEeBCC9"
+# 从 rpc_config.json 加载 RPC 配置
+with open("rpc_config.json", "r") as f:
+    rpc_config = json.load(f)
+ARB_RPC_URLS = rpc_config["ARB_RPC_URLS"]
+UNI_RPC_URLS = rpc_config["UNI_RPC_URLS"]
 
-# === 默认配置 ===
-MIN_INTERVAL = 60  # 最小间隔时间（秒）
-MAX_INTERVAL = 120  # 最大间隔时间（秒）
-AMOUNT_ETH = 0.0001  # 每次跨链金额
-GAS_LIMIT_ARB = 250000
-GAS_LIMIT_UNI = 400000
-MIN_GAS_PRICE = Web3.to_wei(0.1, 'gwei')
+# 从 accounts.json 加载账户配置
+def load_accounts():
+    accounts_file = "accounts.json"
+    if not os.path.exists(accounts_file):
+        logger.error("未找到 accounts.json，请在 bridge-bot.sh 中添加私钥")
+        return []
+    try:
+        with open(accounts_file, "r") as f:
+            accounts_data = json.load(f)
+        if not isinstance(accounts_data, list):
+            logger.error("accounts.json 格式无效，应为列表")
+            return []
+        return accounts_data
+    except json.JSONDecodeError as e:
+        logger.error(f"解析 accounts.json 失败: {e}")
+        return []
+
+# 合约地址
+UNI_TO_ARB_CONTRACT = "0x1cEAb5967E5f078Fa0FEC3DFfD0394Af1fEeBCC9"
+ARB_TO_UNI_CONTRACT = "0x22B65d0B9b59af4D3Ed59F18b9Ad53f5F4908B54"
+
+# 检测并过滤 RPC 的函数
+def test_rpc_connectivity(rpc_urls: List[str], max_attempts: int = 5) -> List[str]:
+    available_rpcs = []
+    for url in rpc_urls:
+        logger.info(f"开始检测 RPC: {url}")
+        for attempt in range(max_attempts):
+            try:
+                w3 = Web3(Web3.HTTPProvider(url, request_kwargs={'timeout': 10}))
+                if w3.is_connected():
+                    logger.info(f"RPC {url} 连接成功")
+                    available_rpcs.append(url)
+                    break
+                else:
+                    logger.warning(f"RPC {url} 第 {attempt + 1} 次尝试失败")
+            except Exception as e:
+                logger.warning(f"RPC {url} 第 {attempt + 1} 次尝试失败: {e}")
+            time.sleep(1)
+        else:
+            logger.error(f"RPC {url} 在 {max_attempts} 次尝试后仍不可用，已屏蔽")
+    if not available_rpcs:
+        logger.error("所有 RPC 均不可用，程序退出")
+        exit(1)
+    return available_rpcs
+
+# === 轮询初始化 Web3 实例的函数 ===
+def get_web3_instance(rpc_urls: List[str], chain_id: int) -> Web3:
+    for url in rpc_urls:
+        try:
+            w3 = Web3(Web3.HTTPProvider(url, request_kwargs={'timeout': 10}))
+            if w3.is_connected():
+                return w3
+            else:
+                logger.warning(f"无法连接到 {url}")
+        except Exception as e:
+            logger.warning(f"连接 {url} 失败: {e}")
+    raise Exception("所有可用 RPC 均不可用")
+
+# === 优化参数 ===
+GAS_LIMIT_UNI = 200000
+GAS_LIMIT_ARB = 200000
+MIN_GAS_PRICE = Web3.to_wei(0.05, 'gwei')
 
 # === 全局计数器 ===
 success_count = 0
 total_success_count = 0
 start_time = time.time()
 
-def load_config():
-    """加载配置文件"""
-    global AMOUNT_ETH, MIN_INTERVAL, MAX_INTERVAL
-    try:
-        with open("config.json", "r") as f:
-            config = json.load(f)
-            AMOUNT_ETH = config.get("AMOUNT_ETH", AMOUNT_ETH)
-            MIN_INTERVAL = config.get("MIN_INTERVAL", MIN_INTERVAL)
-            MAX_INTERVAL = config.get("MAX_INTERVAL", MAX_INTERVAL)
-    except FileNotFoundError:
-        logger.warning("config.json 不存在，使用默认配置")
+# === 初始化并检测 RPC ===
+logger.info("开始检测 Unichain Sepolia RPC...")
+UNI_RPC_URLS = test_rpc_connectivity(UNI_RPC_URLS)
+logger.info("开始检测 Arbitrum Sepolia RPC...")
+ARB_RPC_URLS = test_rpc_connectivity(ARB_RPC_URLS)
 
+# === 账户初始化 ===
+accounts: List[Dict] = []
+ACCOUNTS = load_accounts()  # 加载 accounts.json
+if not ACCOUNTS:
+    logger.error("账户列表为空，请在 bridge-bot.sh 中添加私钥")
+else:
+    logger.info(f"加载账户列表：{ACCOUNTS}")
+    for acc in ACCOUNTS:
+        try:
+            if not acc["private_key"]:
+                logger.warning(f"账户 {acc['name']} 私钥为空，跳过")
+                continue
+            account = Web3(Web3.HTTPProvider(UNI_RPC_URLS[0])).eth.account.from_key(acc["private_key"])
+            address = account.address[2:]
+            accounts.append({
+                "name": acc["name"],
+                "private_key": acc["private_key"],
+                "address": account.address,
+                "address_no_prefix": address,
+                "uni_data": UNI_TO_ARB_DATA_TEMPLATE.format(address=address),
+                "arb_data": ARB_TO_UNI_DATA_TEMPLATE.format(address=address),
+                "uni_pause_until": 0,
+                "arb_pause_until": 0,
+                "uni_to_arb_last": 0,
+                "arb_to_uni_last": 0
+            })
+            logger.info(f"成功初始化账户 {acc['name']}，地址：{account.address}")
+        except Exception as e:
+            logger.error(f"初始化账户 {acc['name']} 失败: {e}")
+
+# === 获取动态 Gas Price ===
 def get_dynamic_gas_price(w3_instance) -> int:
-    """获取动态 Gas Price"""
     try:
         latest_block = w3_instance.eth.get_block('latest')
         base_fee = latest_block['baseFeePerGas']
@@ -62,131 +143,104 @@ def get_dynamic_gas_price(w3_instance) -> int:
         logger.warning(f"获取 Gas Price 失败，使用默认值: {e}")
         return MIN_GAS_PRICE
 
-def check_and_deduct_points(address: str, required_points: int = 1) -> bool:
-    """检查和扣除点数"""
-    try:
-        with open("points.json", "r") as f:
-            points_data = json.load(f)
-        
-        # 验证哈希
-        with open("points.hash", "r") as f:
-            stored_hash = f.read().strip()
-        import hashlib
-        current_hash = hashlib.sha256(json.dumps(points_data).encode()).hexdigest()
-        if current_hash != stored_hash:
-            logger.error(f"点数文件被篡改！")
-            return False
-
-        current_points = points_data.get(address, 0)
-        if current_points < required_points:
-            logger.error(f"账户 {address} 点数不足（当前：{current_points}，需：{required_points}）")
-            return False
-
-        new_points = current_points - required_points
-        points_data[address] = new_points
-        
-        # 保存新的点数和哈希
-        with open("points.json", "w") as f:
-            json.dump(points_data, f, indent=2)
-        with open("points.hash", "w") as f:
-            f.write(hashlib.sha256(json.dumps(points_data).encode()).hexdigest())
-            
-        logger.info(f"账户 {address} 扣除 {required_points} 点，剩余：{new_points}")
-        return True
-    except Exception as e:
-        logger.error(f"点数检查/更新失败：{e}")
-        return False
-
-def send_telegram_notification(message: str):
-    """发送 Telegram 通知"""
-    try:
-        with open("telegram.conf", "r") as f:
-            chat_id = f.read().strip()
-        if not chat_id:
-            return
-        
-        bot_token = "8070858648:AAGfrK1u0IaiXjr4f8TRbUDD92uBGTXdt38"
-        encoded_message = requests.utils.quote(message)
-        url = f"https://api.telegram.org/bot{bot_token}/sendMessage?chat_id={chat_id}&text={encoded_message}"
-        requests.post(url)
-    except Exception as e:
-        logger.error(f"Telegram 通知发送失败：{e}")
-
-def bridge_uni_to_op(account_info: Dict) -> bool:
-    """执行 UNI -> OP 跨链"""
+# === UNI -> ARB 跨链函数 ===
+def bridge_uni_to_arb(account_info: Dict) -> bool:
     global success_count, total_success_count
-
-    if not check_and_deduct_points(account_info["address"], 1):
+    current_time = time.time()
+    if current_time < account_info["uni_to_arb_last"] + REQUEST_INTERVAL:
         return False
-
+    if current_time < account_info["uni_pause_until"]:
+        return False
     try:
-        w3_uni = Web3(Web3.HTTPProvider(UNI_RPC))
-        if not w3_uni.is_connected():
-            logger.error("无法连接到 UNI RPC")
-            return False
-
+        w3_uni = get_web3_instance(UNI_RPC_URLS, chain_id=1301)
         amount_wei = w3_uni.to_wei(AMOUNT_ETH, 'ether')
         balance = w3_uni.eth.get_balance(account_info["address"])
         gas_price = get_dynamic_gas_price(w3_uni)
         total_cost = amount_wei + (gas_price * GAS_LIMIT_UNI)
-
         if balance < total_cost:
-            logger.warning(f"{account_info['name']} UNI 余额不足")
-            send_telegram_notification(f"账户 {account_info['address']} UNI 余额不足")
+            logger.warning(f"{account_info['name']} UNI 余额不足，暂停 UNI -> ARB 1 分钟")
+            account_info["uni_pause_until"] = time.time() + 60
             return False
-
         nonce = w3_uni.eth.get_transaction_count(account_info["address"])
         tx = {
             'from': account_info["address"],
-            'to': ARB_CONTRACT_ADDRESS,
+            'to': UNI_TO_ARB_CONTRACT,
             'value': amount_wei,
             'nonce': nonce,
             'gas': GAS_LIMIT_UNI,
             'gasPrice': gas_price,
             'chainId': 1301,
-            'data': '0x' + account_info["address"][2:].lower().rjust(64, '0')
+            'data': account_info["uni_data"]
         }
-
         signed_tx = w3_uni.eth.account.sign_transaction(tx, account_info["private_key"])
         tx_hash = w3_uni.eth.send_raw_transaction(signed_tx.raw_transaction)
-        tx_receipt = w3_uni.eth.wait_for_transaction_receipt(tx_hash, timeout=180)
-
-        if tx_receipt['status'] == 1:
-            success_count += 1
-            total_success_count += 1
-            logger.info(f"{LIGHT_BLUE}{account_info['name']} UNI -> OP 成功{RESET}")
-            send_telegram_notification(f"账户 {account_info['address']} UNI -> OP 跨链成功，交易哈希：{tx_hash.hex()}")
-            return True
-        else:
-            logger.error(f"{account_info['name']} UNI -> OP 交易失败")
-            send_telegram_notification(f"账户 {account_info['address']} UNI -> OP 交易失败")
-            return False
-
+        tx_receipt = w3_uni.eth.wait_for_transaction_receipt(tx_hash, timeout=30)
+        success_count += 1
+        total_success_count += 1
+        account_info["uni_to_arb_last"] = current_time
+        logger.info(f"{LIGHT_BLUE}{account_info['name']} UNI -> ARB 成功{RESET}")
+        return True
     except Exception as e:
-        logger.error(f"{account_info['name']} UNI -> OP 失败: {e}")
-        send_telegram_notification(f"账户 {account_info['address']} UNI -> OP 失败：{str(e)}")
+        logger.error(f"{account_info['name']} UNI -> ARB 失败: {e}")
         return False
 
-def main():
-    """主函数"""
-    load_config()
-    
-    if not ACCOUNTS:
-        logger.error("账户列表为空")
-        return
+# === ARB -> UNI 跨链函数 ===
+def bridge_arb_to_uni(account_info: Dict) -> bool:
+    global success_count, total_success_count
+    current_time = time.time()
+    if current_time < account_info["arb_to_uni_last"] + REQUEST_INTERVAL:
+        return False
+    if current_time < account_info["arb_pause_until"]:
+        return False
+    try:
+        w3_arb = get_web3_instance(ARB_RPC_URLS, chain_id=421614)
+        amount_wei = w3_arb.to_wei(AMOUNT_ETH, 'ether')
+        balance = w3_arb.eth.get_balance(account_info["address"])
+        gas_price = get_dynamic_gas_price(w3_arb)
+        total_cost = amount_wei + (gas_price * GAS_LIMIT_ARB)
+        if balance < total_cost:
+            logger.warning(f"{account_info['name']} ARB 余额不足，暂停 ARB -> UNI 1 分钟")
+            account_info["arb_pause_until"] = time.time() + 60
+            return False
+        nonce = w3_arb.eth.get_transaction_count(account_info["address"])
+        tx = {
+            'from': account_info["address"],
+            'to': ARB_TO_UNI_CONTRACT,
+            'value': amount_wei,
+            'nonce': nonce,
+            'gas': GAS_LIMIT_ARB,
+            'gasPrice': gas_price,
+            'chainId': 421614,
+            'data': account_info["arb_data"]
+        }
+        signed_tx = w3_arb.eth.account.sign_transaction(tx, account_info["private_key"])
+        tx_hash = w3_arb.eth.send_raw_transaction(signed_tx.raw_transaction)
+        tx_receipt = w3_arb.eth.wait_for_transaction_receipt(tx_hash, timeout=30)
+        success_count += 1
+        total_success_count += 1
+        account_info["arb_to_uni_last"] = current_time
+        logger.info(f"{LIGHT_RED}{account_info['name']} ARB -> UNI 成功{RESET}")
+        return True
+    except Exception as e:
+        logger.error(f"{account_info['name']} ARB -> UNI 失败: {e}")
+        return False
 
-    logger.info(f"加载了 {len(ACCOUNTS)} 个账户")
-    
+# === 并行执行跨链 ===
+def process_account(account_info: Dict):
+    direction = open("direction.conf", "r").read().strip()
     while True:
-        for account in ACCOUNTS:
-            try:
-                bridge_uni_to_op(account)
-            except Exception as e:
-                logger.error(f"处理账户 {account['name']} 时出错: {e}")
-            
-            # 随机等待时间
-            sleep_time = MIN_INTERVAL + (MAX_INTERVAL - MIN_INTERVAL) * (hash(str(time.time())) % 100) / 100
-            time.sleep(sleep_time)
+        if direction == "arb_to_uni":
+            bridge_arb_to_uni(account_info)
+            bridge_uni_to_arb(account_info)
+
+# === 主函数 ===
+def main():
+    if not accounts:
+        logger.error("没有可用的账户，退出程序")
+        return
+    logger.info(f"开始为 {len(accounts)} 个账户执行 UNI-ARB 无限循环跨链，每次 {AMOUNT_ETH} ETH")
+    with ThreadPoolExecutor(max_workers=min(len(accounts), 50)) as executor:
+        executor.map(process_account, accounts)
 
 if __name__ == "__main__":
-    main() 
+    main()
