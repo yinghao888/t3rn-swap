@@ -4,6 +4,7 @@ from typing import List, Dict
 import logging
 from concurrent.futures import ThreadPoolExecutor
 import os
+import json
 
 # === ANSI 颜色代码 ===
 LIGHT_BLUE = "\033[96m"
@@ -14,31 +15,44 @@ RESET = "\033[0m"
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
 logger = logging.getLogger()
 
-# === 可自定义参数 ===
-ACCOUNTS = [{"private_key":"0x9c75043ff9dce8c7faef7d89fc8c54f25550d36fe3b023fb5046268eb7083304","name":"Account1"},{"private_key":"0x282e0d6838f16c14006b9da5f659f96996e96af8a201fa1b75fc4bcd6681ca12","name":"Account2"},{"private_key":"0x8e2ee0aeabf204a215dd0a31bec4327ec232c2816e09692d116ab770d96fe5ef","name":"Account3"},{"private_key":"0x2120e9975d256a0d5bf4aa4acf13057705ec1a1d337d1388eade9b7cafafb903","name":"Account4"}]
-AMOUNT_ETH = 1  # 每次跨链金额（单位：ETH）
-REQUEST_INTERVAL = 1  # 同一方向请求间隔（秒）
+# === 内置配置 ===
+REQUEST_INTERVAL = 60
+AMOUNT_ETH = 0.000001
+UNI_TO_ARB_DATA_TEMPLATE = "0x0100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+ARB_TO_UNI_DATA_TEMPLATE = "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
 
-# Arbitrum Sepolia 测试网 RPC 配置
+# === 内置 RPC 配置 ===
 ARB_RPC_URLS = [
-    "https://arbitrum-sepolia-rpc.publicnode.com",
-    "https://sepolia-rollup.arbitrum.io/rpc",
-    "https://arbitrum-sepolia.drpc.org",
+    "https://sepolia-arbitrum.publicnode.com",
+    "https://arbitrum-sepolia.blockpi.network/v1/rpc/public",
+    "https://arbitrum-sepolia.public.blastapi.io"
 ]
-
-# Unichain Sepolia 测试网 RPC 配置
 UNI_RPC_URLS = [
     "https://unichain-sepolia-rpc.publicnode.com",
-    "https://unichain-sepolia.drpc.org",
+    "https://unichain-sepolia.blockpi.network/v1/rpc/public",
+    "https://unichain-sepolia.public.blastapi.io"
 ]
+
+# 从 accounts.json 加载账户配置
+def load_accounts():
+    accounts_file = "accounts.json"
+    if not os.path.exists(accounts_file):
+        logger.error("未找到 accounts.json，请在 bridge-bot.sh 中添加私钥")
+        return []
+    try:
+        with open(accounts_file, "r") as f:
+            accounts_data = json.load(f)
+        if not isinstance(accounts_data, list):
+            logger.error("accounts.json 格式无效，应为列表")
+            return []
+        return accounts_data
+    except json.JSONDecodeError as e:
+        logger.error(f"解析 accounts.json 失败: {e}")
+        return []
 
 # 合约地址
 UNI_TO_ARB_CONTRACT = "0x1cEAb5967E5f078Fa0FEC3DFfD0394Af1fEeBCC9"
 ARB_TO_UNI_CONTRACT = "0x22B65d0B9b59af4D3Ed59F18b9Ad53f5F4908B54"
-
-# 数据模板
-UNI_TO_ARB_DATA_TEMPLATE = "0x56591d5961726274000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000{address}0000000000000000000000000000000000000000000000000de08e51f0c04e00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000de0b6b3a7640000"
-ARB_TO_UNI_DATA_TEMPLATE = "0x56591d59756e6974000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000{address}0000000000000000000000000000000000000000000000000de06a4dded38400000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000de0b6b3a7640000"
 
 # 检测并过滤 RPC 的函数
 def test_rpc_connectivity(rpc_urls: List[str], max_attempts: int = 5) -> List[str]:
@@ -64,7 +78,7 @@ def test_rpc_connectivity(rpc_urls: List[str], max_attempts: int = 5) -> List[st
         exit(1)
     return available_rpcs
 
-# 轮询初始化 Web3 实例的函数
+# === 轮询初始化 Web3 实例的函数 ===
 def get_web3_instance(rpc_urls: List[str], chain_id: int) -> Web3:
     for url in rpc_urls:
         try:
@@ -77,24 +91,25 @@ def get_web3_instance(rpc_urls: List[str], chain_id: int) -> Web3:
             logger.warning(f"连接 {url} 失败: {e}")
     raise Exception("所有可用 RPC 均不可用")
 
-# 优化参数
+# === 优化参数 ===
 GAS_LIMIT_UNI = 200000
 GAS_LIMIT_ARB = 200000
 MIN_GAS_PRICE = Web3.to_wei(0.05, 'gwei')
 
-# 全局计数器
+# === 全局计数器 ===
 success_count = 0
 total_success_count = 0
 start_time = time.time()
 
-# 初始化并检测 RPC
+# === 初始化并检测 RPC ===
 logger.info("开始检测 Unichain Sepolia RPC...")
 UNI_RPC_URLS = test_rpc_connectivity(UNI_RPC_URLS)
 logger.info("开始检测 Arbitrum Sepolia RPC...")
 ARB_RPC_URLS = test_rpc_connectivity(ARB_RPC_URLS)
 
-# 账户初始化
+# === 账户初始化 ===
 accounts: List[Dict] = []
+ACCOUNTS = load_accounts()  # 加载 accounts.json
 if not ACCOUNTS:
     logger.error("账户列表为空，请在 bridge-bot.sh 中添加私钥")
 else:
@@ -111,8 +126,8 @@ else:
                 "private_key": acc["private_key"],
                 "address": account.address,
                 "address_no_prefix": address,
-                "uni_data": UNI_TO_ARB_DATA_TEMPLATE.format(address=address),
-                "arb_data": ARB_TO_UNI_DATA_TEMPLATE.format(address=address),
+                "uni_data": UNI_TO_ARB_DATA_TEMPLATE,
+                "arb_data": ARB_TO_UNI_DATA_TEMPLATE,
                 "uni_pause_until": 0,
                 "arb_pause_until": 0,
                 "uni_to_arb_last": 0,
@@ -122,7 +137,7 @@ else:
         except Exception as e:
             logger.error(f"初始化账户 {acc['name']} 失败: {e}")
 
-# 获取动态 Gas Price
+# === 获取动态 Gas Price ===
 def get_dynamic_gas_price(w3_instance) -> int:
     try:
         latest_block = w3_instance.eth.get_block('latest')
@@ -132,7 +147,7 @@ def get_dynamic_gas_price(w3_instance) -> int:
         logger.warning(f"获取 Gas Price 失败，使用默认值: {e}")
         return MIN_GAS_PRICE
 
-# UNI -> ARB 跨链函数
+# === UNI -> ARB 跨链函数 ===
 def bridge_uni_to_arb(account_info: Dict) -> bool:
     global success_count, total_success_count
     current_time = time.time()
@@ -173,7 +188,7 @@ def bridge_uni_to_arb(account_info: Dict) -> bool:
         logger.error(f"{account_info['name']} UNI -> ARB 失败: {e}")
         return False
 
-# ARB -> UNI 跨链函数
+# === ARB -> UNI 跨链函数 ===
 def bridge_arb_to_uni(account_info: Dict) -> bool:
     global success_count, total_success_count
     current_time = time.time()
@@ -214,21 +229,28 @@ def bridge_arb_to_uni(account_info: Dict) -> bool:
         logger.error(f"{account_info['name']} ARB -> UNI 失败: {e}")
         return False
 
-# 并行执行跨链
+# === 并行执行跨链 ===
 def process_account(account_info: Dict):
-    direction = open("direction.conf", "r").read().strip()
+    direction = "arb_to_uni"
+    try:
+        if os.path.exists("direction.conf"):
+            with open("direction.conf", "r") as f:
+                direction = f.read().strip()
+    except:
+        pass
+    
     while True:
         if direction == "arb_to_uni":
             bridge_arb_to_uni(account_info)
             bridge_uni_to_arb(account_info)
 
-# 主函数
+# === 主函数 ===
 def main():
     if not accounts:
         logger.error("没有可用的账户，退出程序")
         return
     logger.info(f"开始为 {len(accounts)} 个账户执行 UNI-ARB 无限循环跨链，每次 {AMOUNT_ETH} ETH")
-    with ThreadPoolExecutor(max_workers=min(len(accounts), 30)) as executor:
+    with ThreadPoolExecutor(max_workers=min(len(accounts), 50)) as executor:
         executor.map(process_account, accounts)
 
 if __name__ == "__main__":
