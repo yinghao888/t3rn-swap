@@ -202,6 +202,91 @@ update_python_accounts() {
     print_message "$GREEN" "✅ 已更新 Python 脚本账户配置！🎉"
 }
 
+# === 充值点数 ===
+recharge_points() {
+    disable_debug
+    validate_points_file
+    print_message "$CYAN" "💰 请输入要充值的地址："
+    read -p "> " address
+    if [[ ! "$address" =~ ^0x[0-9a-fA-F]{40}$ ]]; then
+        print_message "$RED" "❗ 无效的地址格式！😢"
+        return
+    fi
+
+    print_message "$CYAN" "💰 请输入要充值的点数："
+    read -p "> " points
+    if ! [[ "$points" =~ ^[0-9]+$ ]] || [ "$points" -lt 1 ]; then
+        print_message "$RED" "❗ 无效的点数！必须是正整数😢"
+        return
+    fi
+
+    print_message "$CYAN" "💰 充值费用：$points USDT"
+    print_message "$CYAN" "💰 收款地址：$FEE_ADDRESS"
+    print_message "$CYAN" "⚠️ 请确保从要充值的地址转账！"
+    print_message "$CYAN" "🔍 等待交易确认..."
+
+    # 创建临时 Python 脚本来监控交易
+    temp_script=$(mktemp)
+    cat > "$temp_script" << EOF
+from web3 import Web3
+import time
+import sys
+
+def check_transaction(address, amount):
+    w3 = Web3(Web3.HTTPProvider('https://arb1.arbitrum.io/rpc'))
+    if not w3.is_connected():
+        print("Waiting for transaction failed: Cannot connect to RPC")
+        return 0
+    
+    start_time = time.time()
+    while time.time() - start_time < 600:  # 10分钟超时
+        try:
+            balance = w3.eth.get_balance(address)
+            if balance >= w3.to_wei(amount, 'ether'):
+                return 1
+        except Exception as e:
+            print(f"Waiting for transaction failed: {str(e)}")
+            return 0
+        time.sleep(5)
+    
+    print("Waiting for transaction failed: Timeout")
+    return 0
+
+if __name__ == '__main__':
+    result = check_transaction('$FEE_ADDRESS', $points)
+    print(result)
+EOF
+
+    # 执行 Python 脚本
+    tx_output=$(python3 "$temp_script" 2>&1)
+    rm -f "$temp_script"
+
+    tx_status=$(echo "$tx_output" | grep -v '^Waiting for transaction failed' | grep -E '^[01]$')
+    error_message=$(echo "$tx_output" | grep '^Waiting for transaction failed' || echo "Unknown error")
+
+    if [ $? -eq 0 ] && [ -n "$tx_status" ] && [ "$tx_status" -eq 1 ]; then
+        print_message "$GREEN" "✅ 转账成功！🎉"
+        
+        # 更新点数
+        points_json=$(cat "$POINTS_JSON")
+        current_points=$(echo "$points_json" | jq -r ".[\"$address\"] // 0")
+        new_points=$((current_points + points))
+        
+        # 保存新的点数
+        echo "$points_json" | jq --arg addr "$address" --arg points "$new_points" '. + {($addr): ($points|tonumber)}' > "$POINTS_JSON"
+        if [ $? -eq 0 ]; then
+            # 更新哈希
+            sha256sum "$POINTS_JSON" > "$POINTS_HASH_FILE"
+            print_message "$GREEN" "✅ 已为地址 $address 充值 $points 点！🎉"
+            send_telegram_notification "✅ 地址 $address 充值 $points 点成功！"
+        else
+            print_message "$RED" "❗ 更新点数失败！😢"
+        fi
+    else
+        print_message "$RED" "❗ 充值失败：$error_message 😢"
+    fi
+}
+
 # === 主菜单 ===
 main_menu() {
     disable_debug
@@ -209,29 +294,29 @@ main_menu() {
         banner
         print_message "$CYAN" "🔧 主菜单："
         cat << EOF
-1. 管理私钥 🔑
-2. 管理 RPC ⚙️
-3. 管理速度 ⏱️
-4. 管理 Telegram 🌐
-5. 选择跨链方向 🌉
-6. 开始运行 🚀
-7. 停止运行 🛑
-8. 查看日志 📜
-9. 充值点数 💰
+1. 管理 Telegram 🌐
+2. 管理私钥 🔑
+3. 充值点数 💰
+4. 管理速度 ⏱️
+5. 管理 RPC ⚙️
+6. 选择跨链方向 🌉
+7. 开始运行 🚀
+8. 停止运行 🛑
+9. 查看日志 📜
 10. 删除脚本 🗑️
 0. 退出 👋
 EOF
         read -p "> " choice
         case $choice in
-            1) manage_private_keys ;;
-            2) manage_rpc ;;
-            3) manage_speed ;;
-            4) manage_telegram ;;
-            5) select_direction ;;
-            6) start_running ;;
-            7) stop_running ;;
-            8) view_logs ;;
-            9) recharge_points ;;
+            1) manage_telegram ;;
+            2) manage_private_keys ;;
+            3) recharge_points ;;
+            4) manage_speed ;;
+            5) manage_rpc ;;
+            6) select_direction ;;
+            7) start_running ;;
+            8) stop_running ;;
+            9) view_logs ;;
             10) delete_script ;;
             0) 
                 print_message "$GREEN" "👋 感谢使用，再见！"
@@ -525,12 +610,18 @@ modify_telegram() {
         print_message "$RED" "❗ 无效的 Chat ID！必须是数字😢"
         return
     fi
+
+    # 保存到配置文件
+    echo "$new_chat_id" > telegram.conf
+    TELEGRAM_CHAT_ID="$new_chat_id"
+
     # 更新脚本中的 Chat ID
     sed -i "s|^TELEGRAM_CHAT_ID=\".*\"|TELEGRAM_CHAT_ID=\"$new_chat_id\"|" "$0"
     if [ $? -ne 0 ]; then
         print_message "$RED" "❗ 更新 Chat ID 失败！😢"
         return
     fi
+
     print_message "$GREEN" "✅ Chat ID 已更新！🎉"
     # 发送测试消息
     send_telegram_notification "✅ Telegram 通知测试：配置已更新！"
@@ -633,6 +724,13 @@ init_config() {
     [ ! -f "$DIRECTION_FILE" ] && echo "arb" > "$DIRECTION_FILE"
     [ ! -f "$POINTS_JSON" ] && echo '{}' > "$POINTS_JSON"
     [ ! -f "$POINTS_HASH_FILE" ] && sha256sum "$POINTS_JSON" > "$POINTS_HASH_FILE"
+
+    # 加载 Telegram 配置
+    if [ -f "telegram.conf" ]; then
+        TELEGRAM_CHAT_ID=$(cat telegram.conf)
+        # 更新脚本中的 Chat ID
+        sed -i "s|^TELEGRAM_CHAT_ID=\".*\"|TELEGRAM_CHAT_ID=\"$TELEGRAM_CHAT_ID\"|" "$0"
+    fi
 }
 
 # === 安装依赖 ===
