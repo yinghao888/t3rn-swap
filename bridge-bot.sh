@@ -170,30 +170,11 @@ init_config() {
         echo '{}' > "$POINTS_JSON" && echo -e "${GREEN}✅ 创建 $POINTS_JSON 💸${NC}"
         sha256sum "$POINTS_JSON" > "$POINTS_HASH_FILE" 2>/dev/null || {
             echo -e "${RED}❗ 无法创建 $POINTS_HASH_FILE，请检查写入权限😢${NC}" >&2
-            exit 1
+            return 0
         }
         echo -e "${GREEN}✅ 创建 $POINTS_HASH_FILE 🎉${NC}"
     fi
-}
-
-# === 验证点数文件完整性 ===
-validate_points_file() {
-    if [ ! -f "$POINTS_JSON" ] || [ ! -f "$POINTS_HASH_FILE" ]; then
-        echo -e "${RED}❗ 点数文件或哈希文件缺失！尝试重新创建...😢${NC}" >&2
-        echo '{}' > "$POINTS_JSON"
-        sha256sum "$POINTS_JSON" > "$POINTS_HASH_FILE" 2>/dev/null || {
-            echo -e "${RED}❗ 无法创建 $POINTS_HASH_FILE，请检查写入权限😢${NC}" >&2
-            exit 1
-        }
-        echo -e "${GREEN}✅ 点数文件已重新创建🎉${NC}"
-    fi
-    current_hash=$(sha256sum "$POINTS_JSON" | awk '{print $1}')
-    stored_hash=$(awk '{print $1}' "$POINTS_HASH_FILE")
-    if [ "$current_hash" != "$stored_hash" ]; then
-        echo -e "${RED}❗ 点数文件被篡改！😢${NC}" >&2
-        send_telegram_notification "点数文件被篡改，脚本退出！"
-        exit 1
-    fi
+    return 0
 }
 
 # === 读取账户 ===
@@ -318,40 +299,6 @@ send_telegram_notification() {
     fi
 }
 
-# === 获取账户余额 ===
-get_account_balance() {
-    local address="$1"
-    local chain="$2"
-    local balance_wei=0
-    case "$chain" in
-        "OP")
-            rpc_urls=$(jq -r '.OP_RPC_URLS[]' "$RPC_CONFIG_FILE")
-            ;;
-        "ARB")
-            rpc_urls=$(jq -r '.ARB_RPC_URLS[]' "$RPC_CONFIG_FILE")
-            ;;
-        "UNI")
-            rpc_urls=$(jq -r '.UNI_RPC_URLS[]' "$RPC_CONFIG_FILE")
-            ;;
-        *)
-            echo "0"
-            return 1
-            ;;
-    esac
-    for url in $rpc_urls; do
-        balance_wei=$("$VENV_PATH/bin/python3" -c "from web3 import Web3; w3 = Web3(Web3.HTTPProvider('$url')); print(w3.eth.get_balance('$address'))" 2>/dev/null)
-        if [ -n "$balance_wei" ]; then
-            break
-        fi
-    done
-    if [ -z "$balance_wei" ]; then
-        echo "0"
-        return 1
-    fi
-    balance_eth=$("$VENV_PATH/bin/python3" -c "print('{:.6f}'.format($balance_wei / 10**18))" 2>/dev/null)
-    echo "$balance_eth"
-}
-
 # === 添加私钥 ===
 add_private_key() {
     validate_points_file
@@ -376,7 +323,7 @@ add_private_key() {
             echo -e "${RED}❗ 私钥 ${formatted_key:0:10}... 已存在，跳过😢${NC}" >&2
             continue
         fi
-        address=$("$VENV_PATH/bin/python3" -c "from web3 import Web3; print(Web3(Web3.HTTPProvider('https://sepolia.unichain.org')).eth.account.from_key('$formatted_key').address)" 2>/dev/null)
+        address=$(python3 -c "from web3 import Web3; print(Web3(Web3.HTTPProvider('https://sepolia.unichain.org')).eth.account.from_key('$formatted_key').address)" 2>/dev/null)
         if [ -z "$address" ]; then
             echo -e "${RED}❗ 无法计算私钥 ${formatted_key:0:10}... 的地址，跳过😢${NC}" >&2
             continue
@@ -427,7 +374,7 @@ delete_private_key() {
         key=$(echo "$line" | jq -r '.private_key')
         address=$(echo "$line" | jq -r '.address')
         if [ -z "$address" ]; then
-            address=$("$VENV_PATH/bin/python3" -c "from web3 import Web3; print(Web3(Web3.HTTPProvider('https://sepolia.unichain.org')).eth.account.from_key('$key').address)" 2>/dev/null)
+            address=$(python3 -c "from web3 import Web3; print(Web3(Web3.HTTPProvider('https://sepolia.unichain.org')).eth.account.from_key('$key').address)" 2>/dev/null)
         fi
         if [ -n "$name" ] && [ -n "$key" ] && [ -n "$address" ]; then
             op_balance=$(get_account_balance "$address" "OP")
@@ -500,7 +447,7 @@ view_private_keys() {
         key=$(echo "$line" | jq -r '.private_key')
         address=$(echo "$line" | jq -r '.address')
         if [ -z "$address" ]; then
-            address=$("$VENV_PATH/bin/python3" -c "from web3 import Web3; print(Web3(Web3.HTTPProvider('https://sepolia.unichain.org')).eth.account.from_key('$key').address)" 2>/dev/null)
+            address=$(python3 -c "from web3 import Web3; print(Web3(Web3.HTTPProvider('https://sepolia.unichain.org')).eth.account.from_key('$key').address)" 2>/dev/null)
         fi
         if [ -n "$name" ] && [ -n "$key" ] && [ -n "$address" ]; then
             op_balance=$(get_account_balance "$address" "OP")
@@ -625,7 +572,7 @@ recharge_points() {
     elif [ "$points" -ge 100000 ]; then
         discount=0.85
     fi
-    discounted_eth=$("$VENV_PATH/bin/python3" -c "print('{:.6f}'.format($amount_eth * $discount))")
+    discounted_eth=$(python3 -c "print('{:.6f}'.format($amount_eth * $discount))")
     echo -e "${CYAN}💸 将获得 $points 点，需支付 $discounted_eth ETH（折扣：${discount}）${NC}"
     accounts=$(read_accounts)
     count=$(echo "$accounts" | jq 'length')
@@ -641,7 +588,7 @@ recharge_points() {
         key=$(echo "$line" | jq -r '.private_key')
         address=$(echo "$line" | jq -r '.address')
         if [ -z "$address" ]; then
-            address=$("$VENV_PATH/bin/python3" -c "from web3 import Web3; print(Web3(Web3.HTTPProvider('https://sepolia.unichain.org')).eth.account.from_key('$key').address)" 2>/dev/null)
+            address=$(python3 -c "from web3 import Web3; print(Web3(Web3.HTTPProvider('https://sepolia.unichain.org')).eth.account.from_key('$key').address)" 2>/dev/null)
             if [ -z "$address" ]; then
                 echo -e "${RED}❗ 无法计算账户 $name 的地址，跳过😢${NC}" >&2
                 continue
@@ -680,14 +627,14 @@ recharge_points() {
     account=$(echo "${accounts_list[$((index-1))]}" | jq -r '.private_key')
     address=$(echo "${accounts_list[$((index-1))]}" | jq -r '.address')
     if [ -z "$address" ] || [ "$address" == "null" ]; then
-        address=$("$VENV_PATH/bin/python3" -c "from web3 import Web3; print(Web3(Web3.HTTPProvider('https://sepolia.unichain.org')).eth.account.from_key('$account').address)" 2>/dev/null)
+        address=$(python3 -c "from web3 import Web3; print(Web3(Web3.HTTPProvider('https://sepolia.unichain.org')).eth.account.from_key('$account').address)" 2>/dev/null)
         if [ -z "$address" ]; then
             echo -e "${RED}❗ 无法计算账户地址！😢${NC}" >&2
             return
         fi
     fi
     chains=("ARB" "UNI" "OP")
-    amount_wei=$("$VENV_PATH/bin/python3" -c "print(int($discounted_eth * 10**18))")
+    amount_wei=$(python3 -c "print(int($discounted_eth * 10**18))")
     gas_limit=21000
     max_attempts=3
     for c in "${chains[@]}"; do
@@ -731,7 +678,7 @@ except Exception as e:
     print(f'Check failed: {str(e)}', file=sys.stderr)
     sys.exit(1)
 EOF
-            tx_output=$("$VENV_PATH/bin/python3" "$temp_script" 2>&1)
+            tx_output=$(python3 "$temp_script" 2>&1)
             rm -f "$temp_script"
             if echo "$tx_output" | grep -q "Sufficient balance"; then
                 echo -e "${CYAN}💸 将从 $c 链转账 $discounted_eth ETH 到 $FEE_ADDRESS（使用 RPC: $url）...${NC}"
@@ -770,7 +717,7 @@ except Exception as e:
     print(f'Transaction failed: {str(e)}', file=sys.stderr)
     sys.exit(1)
 EOF
-                    tx_output=$("$VENV_PATH/bin/python3" "$temp_script" 2>&1)
+                    tx_output=$(python3 "$temp_script" 2>&1)
                     rm -f "$temp_script"
                     tx_hash=$(echo "$tx_output" | grep -v '^Transaction failed' | grep -E '^[0-9a-fA-Fx]+$')
                     error_message=$(echo "$tx_output" | grep '^Transaction failed' || echo "Unknown error")
@@ -789,200 +736,6 @@ except Exception as e:
     print(f'Waiting for transaction failed: {str(e)}', file=sys.stderr)
     sys.exit(1)
 EOF
-                        receipt=$("$VENV_PATH/bin/python3" "$temp_script" 2>&1)
-                        rm -f "$temp_script"
-                        if [ "$receipt" -eq 1 ]; then
-                            current_points=$(jq -r ".\"$address\" // 0" "$POINTS_JSON")
-                            new_points=$((current_points + points))
-                            update_points "$address" "$new_points"
-                            if [ $? -eq 0 ]; then
-                                echo -e "${GREEN}✅ 充值成功！账户 $address 获得 $points 点数，总点数：$new_points 🎉${NC}"
-                                send_telegram_notification "账户 $address 充值成功，获得 $points 点数，总点数：$new_points，交易哈希：$tx_hash"
-                                return
-                            else
-                                echo -e "${RED}❗ 更新点数失败，恢复原始点数😢${NC}" >&2
-                                send_telegram_notification "账户 $address 充值失败，点数更新失败！"
-                                return
-                            fi
-                        fi
-                    else
-                        echo -e "${RED}❗ 转账失败，第 $attempt 次尝试！错误：$error_message😢${NC}" >&2
-                    fi
-                    if [ $attempt -lt $max_attempts ]; then
-                        echo -e "${CYAN}⏳ 等待 10 秒后重试...${NC}"
-                        sleep 10
-                    fi
-                done
-                echo -e "${RED}❗ 在 $c 链上转账失败，尝试下一条链...😢${NC}" >&2
-            else
-                error_message=$(echo "$tx_output" | grep '^Check failed' || echo "Unknown error")
-                echo -e "${RED}❗ 在 $c 链上余额不足或检查失败！错误：$error_message😢${NC}" >&2
-            fi
-        done
-    done
-    op_balance=$(get_account_balance "$address" "OP")
-    arb_balance=$(get_account_balance "$address" "ARB")
-    uni_balance=$(get_account_balance "$address" "UNI")
-    echo -e "${RED}❗ 所有链上转账失败，请检查网络、余额或 RPC 配置！😢${NC}" >&2
-    echo -e "${CYAN}余额：OP: $op_balance ETH, ARB: $arb_balance ETH, UNI: $uni_balance ETH${NC}"
-    send_telegram_notification "账户 $address 充值失败，请检查网络、余额或 RPC 配置！余额：OP: $op_balance ETH, ARB: $arb_balance ETH, UNI: $uni_balance ETH"
-}
-
-# === 查看当前 RPC ===
-view_rpc_config() {
-    validate_points_file
-    rpc_config=$(read_rpc_config)
-    echo -e "${CYAN}⚙️ 当前 RPC 配置：${NC}"
-    echo -e "${CYAN}📋 Arbitrum Sepolia RPC:${NC}"
-    echo "$rpc_config" | jq -r '.ARB_RPC_URLS[]' | nl -w2 -s '. '
-    echo -e "${CYAN}📋 Unichain Sepolia RPC:${NC}"
-    echo "$rpc_config" | jq -r '.UNI_RPC_URLS[]' | nl -w2 -s '. '
-    echo -e "${CYAN}📋 Optimism Sepolia RPC:${NC}"
-    echo "$rpc_config" | jq -r '.OP_RPC_URLS[]' | nl -w2 -s '. '
-}
-
-# === 添加 RPC ===
-add_rpc() {
-    validate_points_file
-    echo -e "${CYAN}⚙️ 请选择链类型：${NC}"
-    echo "1. Arbitrum Sepolia (ARB) 🌟"
-    echo "2. Unichain Sepolia (UNI) 🌟"
-    echo "3. Optimism Sepolia (OP) 🌟"
-    read -p "> " chain_choice
-    case $chain_choice in
-        1) chain_key="ARB_RPC_URLS" ;;
-        2) chain_key="UNI_RPC_URLS" ;;
-        3) chain_key="OP_RPC_URLS" ;;
-        *) echo -e "${RED}❗ 无效链类型！😢${NC}" >&2; return ;;
-    esac
-    echo -e "${CYAN}🌐 请输入 RPC URL（例如 https://rpc.example.com）：${NC}"
-    read -p "> " rpc_url
-    if [[ ! "$rpc_url" =~ ^https?:// ]]; then
-        echo -e "${RED}❗ 无效 URL，必须以 http:// 或 https:// 开头！😢${NC}" >&2
-        return
-    fi
-    rpc_config=$(read_rpc_config)
-    temp_file=$(mktemp)
-    echo "$rpc_config" > "$temp_file"
-    new_config=$(echo "$rpc_config" | jq -c ".${chain_key} += [\"$rpc_url\"]")
-    echo "$new_config" > "$RPC_CONFIG_FILE"
-    if ! jq -e . "$RPC_CONFIG_FILE" >/dev/null 2>&1; then
-        echo -e "${RED}❗ 错误：写入 $RPC_CONFIG_FILE 失败，恢复原始内容😢${NC}" >&2
-        mv "$temp_file" "$RPC_CONFIG_FILE"
-        rm "$temp_file"
-        return
-    fi
-    rm "$temp_file"
-    update_python_rpc
-    echo -e "${GREEN}✅ 已添加 RPC: $rpc_url 到 $chain_key 🎉${NC}"
-}
-
-# === 删除 RPC ===
-delete_rpc() {
-    validate_points_file
-    echo -e "${CYAN}⚙️ 请选择链类型：${NC}"
-    echo "1. Arbitrum Sepolia (ARB) 🌟"
-    echo "2. Unichain Sepolia (UNI) 🌟"
-    echo "3. Optimism Sepolia (OP) 🌟"
-    read -p "> " chain_choice
-    case $chain_choice in
-        1) chain_key="ARB_RPC_URLS" ;;
-        2) chain_key="UNI_RPC_URLS" ;;
-        3) chain_key="OP_RPC_URLS" ;;
-        *) echo -e "${RED}❗ 无效链类型！😢${NC}" >&2; return ;;
-    esac
-    rpc_config=$(read_rpc_config)
-    count=$(echo "$rpc_config" | jq ".${chain_key} | length")
-    if [ "$count" -eq 0 ]; then
-        echo -e "${RED}❗ $chain_key RPC 列表为空！😢${NC}" >&2
-        return
-    fi
-    echo -e "${CYAN}📋 当前 $chain_key RPC 列表：${NC}"
-    echo "$rpc_config" | jq -r ".${chain_key}[]" | nl -w2 -s '. '
-    echo -e "${CYAN}🔍 请输入要删除的 RPC 编号（或 0 取消）：${NC}"
-    read -p "> " index
-    [ "$index" -eq 0 ] && return
-    if [ -z "$index" ] || [ "$index" -le 0 ] || [ "$index" -gt "$count" ]; then
-        echo -e "${RED}❗ 无效编号！😢${NC}" >&2
-        return
-    fi
-    temp_file=$(mktemp)
-    echo "$rpc_config" > "$temp_file"
-    new_config=$(echo "$rpc_config" | jq -c "del(.${chain_key}[$((index-1))])")
-    echo "$new_config" > "$RPC_CONFIG_FILE"
-    if ! jq -e . "$RPC_CONFIG_FILE" >/dev/null 2>&1; then
-        echo -e "${RED}❗ 错误：写入 $RPC_CONFIG_FILE 失败，恢复原始内容😢${NC}" >&2
-        mv "$temp_file" "$RPC_CONFIG_FILE"
-        rm "$temp_file"
-        return
-    fi
-    rm "$temp_file"
-    update_python_rpc
-    echo -e "${GREEN}✅ 已删除 $chain_key 的 RPC！🎉${NC}"
-}
-
-# === 更新 Python 脚本 RPC 配置 ===
-update_python_rpc() {
-    validate_points_file
-    rpc_config=$(read_rpc_config)
-    arb_api_str=$(echo "$rpc_config" | jq -r '.ARB_API_URLS' | sed 's/"/\\"/g')
-    arb_rpc_str=$(echo "$rpc_config" | jq -r '.ARB_RPC_URLS' | sed 's/"/\\"/g')
-    uni_api_str=$(echo "$rpc_config" | jq -r '.UNI_API_URLS' | sed 's/"/\\"/g')
-    uni_rpc_str=$(echo "$rpc_config" | jq -r '.UNI_RPC_URLS' | sed 's/"/\\"/g')
-    op_api_str=$(echo "$rpc_config" | jq -r '.OP_API_URLS' | sed 's/"/\\"/g')
-    op_rpc_str=$(echo "$rpc_config" | jq -r '.OP_RPC_URLS' | sed 's/"/\\"/g')
-    for script in "$ARB_SCRIPT" "$OP_SCRIPT"; do
-        if [ ! -f "$script" ]; then
-            echo -e "${RED}❗ 错误：$script 不存在😢${NC}" >&2
-            return
-        fi
-        if [ ! -w "$script" ]; then
-            echo -e "${RED}❗ 错误：$script 不可写😢${NC}" >&2
-            return
-        fi
-    done
-    sed -i "s|^ARB_API_URLS = .*|ARB_API_URLS = $arb_api_str|" "$ARB_SCRIPT"
-    sed -i "s|^ARB_RPC_URLS = .*|ARB_RPC_URLS = $arb_rpc_str|" "$ARB_SCRIPT"
-    sed -i "s|^UNI_API_URLS = .*|UNI_API_URLS = $uni_api_str|" "$ARB_SCRIPT"
-    sed -i "s|^UNI_RPC_URLS = .*|UNI_RPC_URLS = $uni_rpc_str|" "$ARB_SCRIPT"
-    sed -i "s|^OP_API_URLS = .*|OP_API_URLS = $op_api_str|" "$OP_SCRIPT"
-    sed -i "s|^OP_RPC_URLS = .*|OP_RPC_URLS = $op_rpc_str|" "$OP_SCRIPT"
-    sed -i "s|^UNI_API_URLS = .*|UNI_API_URLS = $uni_api_str|" "$OP_SCRIPT"
-    sed -i "s|^UNI_RPC_URLS = .*|UNI_RPC_URLS = $uni_rpc_str|" "$OP_SCRIPT"
-    echo -e "${GREEN}✅ 已更新 $ARB_SCRIPT 和 $OP_SCRIPT 的 RPC 配置！🎉${NC}"
-    echo -e "${CYAN}📋 当前 $ARB_SCRIPT RPC 内容：${NC}"
-    grep "^ARB_API_URLS =" "$ARB_SCRIPT"
-    grep "^ARB_RPC_URLS =" "$ARB_SCRIPT"
-    grep "^UNI_API_URLS =" "$ARB_SCRIPT"
-    grep "^UNI_RPC_URLS =" "$ARB_SCRIPT"
-    echo -e "${CYAN}📋 当前 $OP_SCRIPT RPC 内容：${NC}"
-    grep "^OP_API_URLS =" "$OP_SCRIPT"
-    grep "^OP_RPC_URLS =" "$OP_SCRIPT"
-    grep "^UNI_API_URLS =" "$OP_SCRIPT"
-    grep "^UNI_RPC_URLS =" "$OP_SCRIPT"
-}
-
-# === RPC 管理 ===
-manage_rpc() {
-    validate_points_file
-    while true; do
-        banner
-        echo -e "${CYAN}⚙️ RPC 管理：${NC}"
-        echo "1. 查看当前 RPC 📋"
-        echo "2. 添加 RPC ➕"
-        echo "3. 删除 RPC ➖"
-        echo "4. 返回 🔙"
-        read -p "> " sub_choice
-        case $sub_choice in
-            1) view_rpc_config ;;
-            2) add_rpc ;;
-            3) delete_rpc ;;
-            4) break ;;
-            *) echo -e "${RED}❗ 无效选项！😢${NC}" >&2 ;;
-        esac
-        read -p "按回车继续... ⏎"
-    done
-}
 
 # === 查看当前速度 ===
 view_speed_config() {
