@@ -347,43 +347,71 @@ EOF
     temp_transfer_script=$(mktemp)
     cat > "$temp_transfer_script" << 'EOF'
 from web3 import Web3
+from eth_account.signers.local import LocalAccount
+from eth_account.messages import encode_defunct
 import time
 import sys
 import json
 
-def send_transaction(private_key, to_address, amount, rpc_url, chain_id):
+def send_transaction(private_key: str, to_address: str, amount: float, rpc_url: str, chain_id: int) -> dict:
     w3 = Web3(Web3.HTTPProvider(rpc_url))
     if not w3.is_connected():
         return {"success": False, "error": "Cannot connect to RPC"}
 
     try:
-        account = w3.eth.account.from_key(private_key)
+        account: LocalAccount = w3.eth.account.from_key(private_key)
         from_address = account.address
-        
-        nonce = w3.eth.get_transaction_count(from_address)
+
+        # 获取当前 gas 价格和 nonce
         gas_price = w3.eth.gas_price
-        
+        nonce = w3.eth.get_transaction_count(from_address)
+
+        # 准备交易
         transaction = {
             'nonce': nonce,
             'to': to_address,
             'value': w3.to_wei(amount, 'ether'),
-            'gas': 21000,
-            'gasPrice': gas_price,
-            'chainId': chain_id
+            'gas': 21000,  # 标准 ETH 转账 gas 限制
+            'maxFeePerGas': gas_price,
+            'maxPriorityFeePerGas': gas_price,
+            'chainId': chain_id,
+            'type': 2  # EIP-1559 交易类型
         }
+
+        # 获取 base fee
+        block = w3.eth.get_block('latest')
+        if 'baseFeePerGas' in block:
+            base_fee = block['baseFeePerGas']
+            transaction['maxFeePerGas'] = base_fee * 2
+            transaction['maxPriorityFeePerGas'] = min(gas_price, base_fee)
+
+        # 估算 gas
+        try:
+            estimated_gas = w3.eth.estimate_gas({
+                'to': to_address,
+                'value': w3.to_wei(amount, 'ether'),
+                'from': from_address
+            })
+            transaction['gas'] = int(estimated_gas * 1.1)  # 添加 10% 缓冲
+        except Exception:
+            # 如果估算失败，使用默认值
+            transaction['gas'] = 21000
+
+        # 签名交易
+        signed = account.sign_transaction(transaction)
         
-        signed_txn = w3.eth.account.sign_transaction(transaction, private_key)
-        tx_hash = w3.eth.send_raw_transaction(signed_txn.rawTransaction)
+        # 发送交易
+        tx_hash = w3.eth.send_raw_transaction(signed.rawTransaction)
         
+        # 等待交易确认
         start_time = time.time()
-        while time.time() - start_time < 300:
+        while time.time() - start_time < 300:  # 5 分钟超时
             try:
                 receipt = w3.eth.get_transaction_receipt(tx_hash)
-                if receipt is not None:
+                if receipt:
                     if receipt['status'] == 1:
                         return {"success": True, "hash": tx_hash.hex()}
-                    else:
-                        return {"success": False, "error": "Transaction reverted"}
+                    return {"success": False, "error": "Transaction reverted"}
             except Exception:
                 time.sleep(5)
                 continue
