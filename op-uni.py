@@ -20,7 +20,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
 logger = logging.getLogger()
 
 # === RPC 配置（由脚本动态更新）===
-ARB_RPC = ""
+OP_RPC = ""
 UNI_RPC = ""
 
 # === 合约地址 ===
@@ -31,7 +31,7 @@ ARB_CONTRACT_ADDRESS = "0x1cEAb5967E5f078Fa0FEC3DFfD0394Af1fEeBCC9"
 MIN_INTERVAL = 60  # 最小间隔时间（秒）
 MAX_INTERVAL = 120  # 最大间隔时间（秒）
 AMOUNT_ETH = 0.0001  # 每次跨链金额
-GAS_LIMIT_ARB = 250000
+GAS_LIMIT_OP = 250000
 GAS_LIMIT_UNI = 400000
 MIN_GAS_PRICE = Web3.to_wei(0.1, 'gwei')
 
@@ -112,59 +112,59 @@ def send_telegram_notification(message: str):
     except Exception as e:
         logger.error(f"Telegram 通知发送失败：{e}")
 
-def bridge_uni_to_op(account_info: Dict) -> bool:
-    """执行 UNI -> OP 跨链"""
+def bridge_op_to_uni(account_info: Dict) -> bool:
+    """执行 OP -> UNI 跨链"""
     global success_count, total_success_count
 
     if not check_and_deduct_points(account_info["address"], 1):
         return False
 
     try:
-        w3_uni = Web3(Web3.HTTPProvider(UNI_RPC))
-        if not w3_uni.is_connected():
-            logger.error("无法连接到 UNI RPC")
+        w3_op = Web3(Web3.HTTPProvider(OP_RPC))
+        if not w3_op.is_connected():
+            logger.error("无法连接到 OP RPC")
             return False
 
-        amount_wei = w3_uni.to_wei(AMOUNT_ETH, 'ether')
-        balance = w3_uni.eth.get_balance(account_info["address"])
-        gas_price = get_dynamic_gas_price(w3_uni)
-        total_cost = amount_wei + (gas_price * GAS_LIMIT_UNI)
+        amount_wei = w3_op.to_wei(AMOUNT_ETH, 'ether')
+        balance = w3_op.eth.get_balance(account_info["address"])
+        gas_price = get_dynamic_gas_price(w3_op)
+        total_cost = amount_wei + (gas_price * GAS_LIMIT_OP)
 
         if balance < total_cost:
-            logger.warning(f"{account_info['name']} UNI 余额不足")
-            send_telegram_notification(f"账户 {account_info['address']} UNI 余额不足")
+            logger.warning(f"{account_info['name']} OP 余额不足")
+            send_telegram_notification(f"账户 {account_info['address']} OP 余额不足")
             return False
 
-        nonce = w3_uni.eth.get_transaction_count(account_info["address"])
+        nonce = w3_op.eth.get_transaction_count(account_info["address"])
         tx = {
             'from': account_info["address"],
-            'to': ARB_CONTRACT_ADDRESS,
+            'to': OP_CONTRACT_ADDRESS,
             'value': amount_wei,
             'nonce': nonce,
-            'gas': GAS_LIMIT_UNI,
+            'gas': GAS_LIMIT_OP,
             'gasPrice': gas_price,
-            'chainId': 1301,
+            'chainId': 11155420,
             'data': '0x' + account_info["address"][2:].lower().rjust(64, '0')
         }
 
-        signed_tx = w3_uni.eth.account.sign_transaction(tx, account_info["private_key"])
-        tx_hash = w3_uni.eth.send_raw_transaction(signed_tx.raw_transaction)
-        tx_receipt = w3_uni.eth.wait_for_transaction_receipt(tx_hash, timeout=180)
+        signed_tx = w3_op.eth.account.sign_transaction(tx, account_info["private_key"])
+        tx_hash = w3_op.eth.send_raw_transaction(signed_tx.raw_transaction)
+        tx_receipt = w3_op.eth.wait_for_transaction_receipt(tx_hash, timeout=180)
 
         if tx_receipt['status'] == 1:
             success_count += 1
             total_success_count += 1
-            logger.info(f"{LIGHT_BLUE}{account_info['name']} UNI -> OP 成功{RESET}")
-            send_telegram_notification(f"账户 {account_info['address']} UNI -> OP 跨链成功，交易哈希：{tx_hash.hex()}")
+            logger.info(f"{LIGHT_BLUE}{account_info['name']} OP -> UNI 成功{RESET}")
+            send_telegram_notification(f"账户 {account_info['address']} OP -> UNI 跨链成功，交易哈希：{tx_hash.hex()}")
             return True
         else:
-            logger.error(f"{account_info['name']} UNI -> OP 交易失败")
-            send_telegram_notification(f"账户 {account_info['address']} UNI -> OP 交易失败")
+            logger.error(f"{account_info['name']} OP -> UNI 交易失败")
+            send_telegram_notification(f"账户 {account_info['address']} OP -> UNI 交易失败")
             return False
 
     except Exception as e:
-        logger.error(f"{account_info['name']} UNI -> OP 失败: {e}")
-        send_telegram_notification(f"账户 {account_info['address']} UNI -> OP 失败：{str(e)}")
+        logger.error(f"{account_info['name']} OP -> UNI 失败: {e}")
+        send_telegram_notification(f"账户 {account_info['address']} OP -> UNI 失败：{str(e)}")
         return False
 
 def main():
@@ -180,7 +180,7 @@ def main():
     while True:
         for account in ACCOUNTS:
             try:
-                bridge_uni_to_op(account)
+                bridge_op_to_uni(account)
             except Exception as e:
                 logger.error(f"处理账户 {account['name']} 时出错: {e}")
             
