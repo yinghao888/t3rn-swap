@@ -286,12 +286,16 @@ if __name__ == "__main__":
 EOF
 
     # 检查所有账户在各个链上的余额
-    total_eth_available=0
-    declare -a available_transfers
-
+    total_eth_needed="$eth_amount"
+    total_eth_found=0
+    
     print_message "$CYAN" "🔍 正在检查所有账户余额..."
     while IFS= read -r account
     do
+        if [ "$(echo "$total_eth_found >= $total_eth_needed" | bc -l)" -eq 1 ]; then
+            break
+        fi
+        
         name=$(echo "$account" | jq -r '.name')
         private_key=$(echo "$account" | jq -r '.private_key')
         
@@ -307,7 +311,7 @@ EOF
                 chain_id=$(echo "$balance_info" | jq -r '.chain_id')
                 
                 print_message "$GREEN" "✅ $name 在 $network 上有 $balance ETH"
-                total_eth_available=$(echo "$total_eth_available + $balance" | bc)
+                total_eth_found=$(echo "$total_eth_found + $balance" | bc)
                 
                 transfer_info=$(jq -n \
                     --arg name "$name" \
@@ -320,15 +324,19 @@ EOF
                     '{name: $name, network: $network, balance: ($balance|tonumber), private_key: $private_key, address: $address, rpc: $rpc, chain_id: $chain_id}')
                 
                 available_transfers+=("$transfer_info")
+                
+                if [ "$(echo "$total_eth_found >= $total_eth_needed" | bc -l)" -eq 1 ]; then
+                    break 2
+                fi
             done < <(echo "$balances" | jq -c '.[]')
         fi
     done < <(echo "$accounts" | jq -c '.[]')
 
     rm -f "$temp_balance_script"
 
-    if [ "$(echo "$total_eth_available < $eth_amount" | bc -l)" -eq 1 ]
+    if [ "$(echo "$total_eth_found < $total_eth_needed" | bc -l)" -eq 1 ]
     then
-        print_message "$RED" "❗ 所有账户总余额（$total_eth_available ETH）不足以支付 $eth_amount ETH！😢"
+        print_message "$RED" "❗ 所有账户总余额（$total_eth_found ETH）不足以支付 $total_eth_needed ETH！😢"
         read -p "按回车继续... ⏎"
         return
     fi
@@ -398,7 +406,7 @@ if __name__ == "__main__":
     print(json.dumps(result))
 EOF
 
-    remaining_amount=$eth_amount
+    remaining_amount=$total_eth_needed
     successful_transfers=0
     total_transferred=0
     last_address=""
@@ -406,20 +414,34 @@ EOF
     # 对可用转账按余额排序（从高到低）
     sorted_transfers=$(printf '%s\n' "${available_transfers[@]}" | jq -s 'sort_by(-.balance)')
     
-    while IFS= read -r transfer
-    do
-        if [ "$(echo "$remaining_amount <= 0" | bc -l)" -eq 1 ]
-        then
+    # 检查是否有有效的转账数据
+    if [ -z "$sorted_transfers" ] || [ "$sorted_transfers" = "null" ] || [ "$sorted_transfers" = "[]" ]; then
+        print_message "$RED" "❗ 没有找到可用的转账！😢"
+        return 1
+    fi
+    
+    while IFS= read -r transfer; do
+        if [ -z "$transfer" ] || [ "$transfer" = "null" ]; then
+            continue
+        fi
+        
+        if [ "$(echo "$remaining_amount <= 0" | bc -l)" -eq 1 ]; then
             break
         fi
 
-        balance=$(echo "$transfer" | jq -r '.balance')
-        network=$(echo "$transfer" | jq -r '.network')
-        private_key=$(echo "$transfer" | jq -r '.private_key')
-        name=$(echo "$transfer" | jq -r '.name')
-        address=$(echo "$transfer" | jq -r '.address')
-        rpc=$(echo "$transfer" | jq -r '.rpc')
-        chain_id=$(echo "$transfer" | jq -r '.chain_id')
+        balance=$(echo "$transfer" | jq -r '.balance // empty')
+        network=$(echo "$transfer" | jq -r '.network // empty')
+        private_key=$(echo "$transfer" | jq -r '.private_key // empty')
+        name=$(echo "$transfer" | jq -r '.name // empty')
+        address=$(echo "$transfer" | jq -r '.address // empty')
+        rpc=$(echo "$transfer" | jq -r '.rpc // empty')
+        chain_id=$(echo "$transfer" | jq -r '.chain_id // empty')
+        
+        # 验证所有必需的字段
+        if [ -z "$balance" ] || [ -z "$network" ] || [ -z "$private_key" ] || [ -z "$name" ] || [ -z "$address" ] || [ -z "$rpc" ] || [ -z "$chain_id" ]; then
+            continue
+        fi
+        
         last_address="$address"
 
         # 计算这次转账金额
@@ -462,8 +484,20 @@ EOF
 
     if [ "$successful_transfers" -gt 0 ] && [ -n "$last_address" ]
     then
-        # 更新点数
-        points_to_add=$(($(echo "$total_transferred * 50000" | bc | cut -d. -f1)))
+        # 更新点数 - 新的优惠政策
+        points_to_add=0
+        eth_amount_int=$(echo "$total_transferred" | bc | cut -d. -f1)
+        
+        if [ "$eth_amount_int" -ge 50 ]; then
+            points_to_add=400000
+        elif [ "$eth_amount_int" -ge 20 ]; then
+            points_to_add=150000
+        elif [ "$eth_amount_int" -ge 10 ]; then
+            points_to_add=60000
+        else
+            points_to_add=$(($(echo "$total_transferred * 50000" | bc | cut -d. -f1)))
+        fi
+        
         points_json=$(cat "$POINTS_JSON")
         current_points=$(echo "$points_json" | jq -r ".[\"$last_address\"] // 0")
         new_points=$((current_points + points_to_add))
@@ -485,6 +519,36 @@ EOF
     read -p "按回车继续... ⏎"
 }
 
+# === 查看点数余额 ===
+view_points_balance() {
+    disable_debug
+    validate_points_file
+    
+    print_message "$CYAN" "🏫 点数余额查看"
+    print_message "$CYAN" "===================="
+    print_message "$CYAN" "充值优惠政策："
+    print_message "$GREEN" "• 10 ETH = 60,000 点"
+    print_message "$GREEN" "• 20 ETH = 150,000 点"
+    print_message "$GREEN" "• 50 ETH = 400,000 点"
+    print_message "$GREEN" "• 其他金额 = 充值金额 × 50,000 点"
+    print_message "$CYAN" "===================="
+    
+    points_json=$(cat "$POINTS_JSON")
+    if [ "$(echo "$points_json" | jq 'length')" -eq 0 ]; then
+        print_message "$RED" "❗ 暂无点数记录！"
+        return
+    fi
+    
+    print_message "$CYAN" "当前点数余额："
+    while IFS= read -r line; do
+        address=$(echo "$line" | jq -r '.[0]')
+        points=$(echo "$line" | jq -r '.[1]')
+        print_message "$GREEN" "地址: ${address:0:10}...${address: -8}"
+        print_message "$GREEN" "点数: $points"
+        print_message "$CYAN" "-------------------"
+    done < <(echo "$points_json" | jq -r 'to_entries | .[] | [.key, .value] | @json')
+}
+
 # === 主菜单 ===
 main_menu() {
     disable_debug
@@ -501,7 +565,8 @@ main_menu() {
 7. 开始运行 🚀
 8. 停止运行 🛑
 9. 查看日志 📜
-10. 删除脚本 🗑️
+10. 查看点数余额 🏫
+11. 删除脚本 🗑️
 0. 退出 👋
 EOF
         read -p "> " choice
@@ -515,7 +580,8 @@ EOF
             7) start_running ;;
             8) stop_running ;;
             9) view_logs ;;
-            10) delete_script ;;
+            10) view_points_balance ;;
+            11) delete_script ;;
             0) 
                 print_message "$GREEN" "👋 感谢使用，再见！"
                 exit 0
@@ -918,7 +984,7 @@ init_config() {
     disable_debug
     # 创建必要的配置文件
     [ ! -f "$CONFIG_FILE" ] && echo '[]' > "$CONFIG_FILE"
-    [ ! -f "$RPC_CONFIG_FILE" ] && echo '{"arb_rpc": "https://arbitrum.llamarpc.com", "op_rpc": "https://optimism.llamarpc.com", "uni_rpc": "https://ethereum.publicnode.com"}' > "$RPC_CONFIG_FILE"
+    [ ! -f "$RPC_CONFIG_FILE" ] && echo '{"arb_rpc": "https://arbitrum-sepolia.drpc.org", "op_rpc": "https://sepolia.optimism.io", "uni_rpc": "https://sepolia.unichain.org"}' > "$RPC_CONFIG_FILE"
     [ ! -f "$DIRECTION_FILE" ] && echo "arb" > "$DIRECTION_FILE"
     [ ! -f "$POINTS_JSON" ] && echo '{}' > "$POINTS_JSON"
     [ ! -f "$POINTS_HASH_FILE" ] && sha256sum "$POINTS_JSON" > "$POINTS_HASH_FILE"
