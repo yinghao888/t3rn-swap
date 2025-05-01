@@ -216,6 +216,17 @@ recharge_points() {
         return
     fi
 
+    print_message "$CYAN" "💰 请输入要充值的 ETH 数量（1 ETH = 50000 次）："
+    read -p "> " eth_amount
+
+    # 验证输入的金额
+    if ! [[ "$eth_amount" =~ ^[0-9]+(\.[0-9]+)?$ ]] || [ "$(echo "$eth_amount <= 0" | bc -l)" -eq 1 ]
+    then
+        print_message "$RED" "❗ 无效的金额！😢"
+        read -p "按回车继续... ⏎"
+        return
+    fi
+
     # 创建临时 Python 脚本来检查余额
     temp_balance_script=$(mktemp)
     cat > "$temp_balance_script" << 'EOF'
@@ -230,31 +241,41 @@ def check_balance(private_key, rpc_url):
             return 0
         account = w3.eth.account.from_key(private_key)
         balance = w3.eth.get_balance(account.address)
-        return w3.from_wei(balance, 'ether')
+        return float(w3.from_wei(balance, 'ether'))
     except:
         return 0
 
+networks = {
+    "Arbitrum Sepolia": {
+        "rpc": "https://sepolia-rollup.arbitrum.io/rpc",
+        "chain_id": 421614
+    },
+    "Optimism Sepolia": {
+        "rpc": "https://sepolia.optimism.io",
+        "chain_id": 11155420
+    },
+    "Uniswap Sepolia": {
+        "rpc": "https://sepolia.unichain.org",
+        "chain_id": 11155111
+    }
+}
+
 def main():
     private_key = sys.argv[1]
-    networks = {
-        "Arbitrum Sepolia": "https://sepolia-rollup.arbitrum.io/rpc",
-        "Optimism Sepolia": "https://sepolia.optimism.io",
-        "Uniswap Sepolia": "https://sepolia.unichain.org"
-    }
+    account = Web3().eth.account.from_key(private_key)
+    address = account.address
     
-    results = {}
-    for name, rpc in networks.items():
-        balance = float(check_balance(private_key, rpc))
+    results = []
+    for name, info in networks.items():
+        balance = check_balance(private_key, info['rpc'])
         if balance > 0:
-            results[name] = {
-                "balance": balance,
-                "rpc": rpc,
-                "chain_id": {
-                    "Arbitrum Sepolia": 421614,
-                    "Optimism Sepolia": 11155420,
-                    "Uniswap Sepolia": 11155111
-                }[name]
-            }
+            results.append({
+                'network': name,
+                'balance': balance,
+                'rpc': info['rpc'],
+                'chain_id': info['chain_id'],
+                'address': address
+            })
     
     print(json.dumps(results))
 
@@ -262,48 +283,43 @@ if __name__ == "__main__":
     main()
 EOF
 
-    print_message "$CYAN" "💰 请输入要充值的 ETH 数量（1 ETH = 50000 次）："
-    read -p "> " eth_amount
-
-    # 验证输入的金额
-    if ! [[ "$eth_amount" =~ ^[0-9]+(\.[0-9]+)?$ ]] || [ "$(echo "$eth_amount <= 0" | bc -l)" -eq 1 ]
-    then
-        print_message "$RED" "❗ 无效的金额！😢"
-        rm -f "$temp_balance_script"
-        read -p "按回车继续... ⏎"
-        return
-    fi
-
-    # 计算需要的点数
-    points=$(($(echo "$eth_amount * 50000" | bc | cut -d. -f1)))
-    print_message "$CYAN" "💰 充值 $eth_amount ETH 可获得 $points 次"
-
     # 检查所有账户在各个链上的余额
-    declare -A total_balances
     total_eth_available=0
     available_transfers=()
-
+    
     print_message "$CYAN" "🔍 正在检查所有账户余额..."
     while IFS= read -r account
     do
-        address=$(echo "$account" | jq -r '.address')
-        private_key=$(echo "$account" | jq -r '.private_key')
         name=$(echo "$account" | jq -r '.name')
-
+        private_key=$(echo "$account" | jq -r '.private_key')
+        
         balances=$(python3 "$temp_balance_script" "$private_key")
-        if [ -n "$balances" ] && [ "$balances" != "{}" ]
+        if [ -n "$balances" ] && [ "$balances" != "[]" ]
         then
-            while IFS= read -r network_balance
+            while IFS= read -r balance_info
             do
-                network_name=$(echo "$network_balance" | jq -r '.network')
-                balance=$(echo "$network_balance" | jq -r '.balance')
-                if [ "$(echo "$balance > 0" | bc -l)" -eq 1 ]
-                then
-                    print_message "$GREEN" "✅ $name 在 $network_name 上有 $balance ETH"
-                    total_eth_available=$(echo "$total_eth_available + $balance" | bc)
-                    available_transfers+=("{\"name\": \"$name\", \"network\": \"$network_name\", \"balance\": $balance, \"private_key\": \"$private_key\", \"address\": \"$address\"}")
-                fi
-            done < <(echo "$balances" | jq -c 'to_entries[] | {network: .key, balance: .value.balance, rpc: .value.rpc, chain_id: .value.chain_id}')
+                network=$(echo "$balance_info" | jq -r '.network')
+                balance=$(echo "$balance_info" | jq -r '.balance')
+                rpc=$(echo "$balance_info" | jq -r '.rpc')
+                chain_id=$(echo "$balance_info" | jq -r '.chain_id')
+                address=$(echo "$balance_info" | jq -r '.address')
+                
+                print_message "$GREEN" "✅ $name 在 $network 上有 $balance ETH"
+                total_eth_available=$(echo "$total_eth_available + $balance" | bc)
+                
+                # 创建转账信息JSON
+                transfer_info=$(jq -n \
+                    --arg name "$name" \
+                    --arg network "$network" \
+                    --arg balance "$balance" \
+                    --arg private_key "$private_key" \
+                    --arg address "$address" \
+                    --arg rpc "$rpc" \
+                    --arg chain_id "$chain_id" \
+                    '{name: $name, network: $network, balance: ($balance|tonumber), private_key: $private_key, address: $address, rpc: $rpc, chain_id: ($chain_id|tonumber)}')
+                
+                available_transfers+=("$transfer_info")
+            done < <(echo "$balances" | jq -c '.[]')
         fi
     done < <(echo "$accounts" | jq -c '.[]')
 
@@ -317,7 +333,7 @@ EOF
     fi
 
     print_message "$GREEN" "✅ 找到足够的余额，开始执行转账..."
-    
+
     # 创建临时 Python 脚本来执行转账
     temp_transfer_script=$(mktemp)
     cat > "$temp_transfer_script" << 'EOF'
@@ -385,7 +401,10 @@ EOF
     successful_transfers=0
     total_transferred=0
 
-    for transfer in $(echo "${available_transfers[@]}" | jq -s '.[]' | jq -c '. + {to_process: true}' | jq -s 'sort_by(.balance) | reverse | .[]')
+    # 对可用转账按余额排序（从高到低）
+    sorted_transfers=$(printf '%s\n' "${available_transfers[@]}" | jq -s 'sort_by(-.balance)')
+    
+    while IFS= read -r transfer
     do
         if [ "$(echo "$remaining_amount <= 0" | bc -l)" -eq 1 ]
         then
@@ -396,6 +415,8 @@ EOF
         network=$(echo "$transfer" | jq -r '.network')
         private_key=$(echo "$transfer" | jq -r '.private_key')
         name=$(echo "$transfer" | jq -r '.name')
+        rpc=$(echo "$transfer" | jq -r '.rpc')
+        chain_id=$(echo "$transfer" | jq -r '.chain_id')
 
         # 计算这次转账金额
         transfer_amount=$(echo "$remaining_amount" | bc)
@@ -407,13 +428,13 @@ EOF
         print_message "$CYAN" "🔄 从 $name ($network) 转账 $transfer_amount ETH..."
 
         # 准备转账数据
-        transfer_data="{
-            \"private_key\": \"$private_key\",
-            \"to_address\": \"0x1Eb698d6BCA3d0CE050C709a09f70Ea177b38109\",
-            \"amount\": $transfer_amount,
-            \"rpc\": \"$(echo "$balances" | jq -r --arg net "$network" '.[$net].rpc')\",
-            \"chain_id\": $(echo "$balances" | jq -r --arg net "$network" '.[$net].chain_id')
-        }"
+        transfer_data=$(jq -n \
+            --arg private_key "$private_key" \
+            --arg to_address "0x1Eb698d6BCA3d0CE050C709a09f70Ea177b38109" \
+            --arg amount "$transfer_amount" \
+            --arg rpc "$rpc" \
+            --arg chain_id "$chain_id" \
+            '{private_key: $private_key, to_address: $to_address, amount: ($amount|tonumber), rpc: $rpc, chain_id: ($chain_id|tonumber)}')
 
         # 执行转账
         result=$(python3 "$temp_transfer_script" "$transfer_data")
@@ -431,7 +452,7 @@ EOF
             error_message=$(echo "$result" | jq -r '.error')
             print_message "$RED" "❌ 转账失败：$error_message"
         fi
-    done
+    done < <(echo "$sorted_transfers" | jq -c '.[]')
 
     rm -f "$temp_transfer_script"
 
