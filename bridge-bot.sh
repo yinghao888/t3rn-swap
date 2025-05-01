@@ -238,44 +238,46 @@ def check_balance(private_key, rpc_url):
     try:
         w3 = Web3(Web3.HTTPProvider(rpc_url))
         if not w3.is_connected():
-            return 0
+            return None
         account = w3.eth.account.from_key(private_key)
         balance = w3.eth.get_balance(account.address)
-        return float(w3.from_wei(balance, 'ether'))
-    except:
-        return 0
-
-networks = {
-    "Arbitrum Sepolia": {
-        "rpc": "https://sepolia-rollup.arbitrum.io/rpc",
-        "chain_id": 421614
-    },
-    "Optimism Sepolia": {
-        "rpc": "https://sepolia.optimism.io",
-        "chain_id": 11155420
-    },
-    "Uniswap Sepolia": {
-        "rpc": "https://sepolia.unichain.org",
-        "chain_id": 11155111
-    }
-}
+        return float(w3.from_wei(balance, 'ether')), account.address
+    except Exception as e:
+        print(f"Error checking balance: {str(e)}", file=sys.stderr)
+        return None
 
 def main():
     private_key = sys.argv[1]
-    account = Web3().eth.account.from_key(private_key)
-    address = account.address
+    name = sys.argv[2]
+    
+    networks = {
+        "Arbitrum Sepolia": {
+            "rpc": "https://sepolia-rollup.arbitrum.io/rpc",
+            "chain_id": 421614
+        },
+        "Optimism Sepolia": {
+            "rpc": "https://sepolia.optimism.io",
+            "chain_id": 11155420
+        },
+        "Uniswap Sepolia": {
+            "rpc": "https://sepolia.unichain.org",
+            "chain_id": 11155111
+        }
+    }
     
     results = []
-    for name, info in networks.items():
-        balance = check_balance(private_key, info['rpc'])
-        if balance > 0:
-            results.append({
-                'network': name,
-                'balance': balance,
-                'rpc': info['rpc'],
-                'chain_id': info['chain_id'],
-                'address': address
-            })
+    for network_name, info in networks.items():
+        result = check_balance(private_key, info['rpc'])
+        if result is not None:
+            balance, address = result
+            if balance > 0:
+                results.append({
+                    "network": network_name,
+                    "balance": balance,
+                    "address": address,
+                    "rpc": info['rpc'],
+                    "chain_id": info['chain_id']
+                })
     
     print(json.dumps(results))
 
@@ -285,29 +287,28 @@ EOF
 
     # 检查所有账户在各个链上的余额
     total_eth_available=0
-    available_transfers=()
-    
+    declare -a available_transfers
+
     print_message "$CYAN" "🔍 正在检查所有账户余额..."
     while IFS= read -r account
     do
         name=$(echo "$account" | jq -r '.name')
         private_key=$(echo "$account" | jq -r '.private_key')
         
-        balances=$(python3 "$temp_balance_script" "$private_key")
+        balances=$(python3 "$temp_balance_script" "$private_key" "$name")
         if [ -n "$balances" ] && [ "$balances" != "[]" ]
         then
             while IFS= read -r balance_info
             do
                 network=$(echo "$balance_info" | jq -r '.network')
                 balance=$(echo "$balance_info" | jq -r '.balance')
+                address=$(echo "$balance_info" | jq -r '.address')
                 rpc=$(echo "$balance_info" | jq -r '.rpc')
                 chain_id=$(echo "$balance_info" | jq -r '.chain_id')
-                address=$(echo "$balance_info" | jq -r '.address')
                 
                 print_message "$GREEN" "✅ $name 在 $network 上有 $balance ETH"
                 total_eth_available=$(echo "$total_eth_available + $balance" | bc)
                 
-                # 创建转账信息JSON
                 transfer_info=$(jq -n \
                     --arg name "$name" \
                     --arg network "$network" \
@@ -315,8 +316,8 @@ EOF
                     --arg private_key "$private_key" \
                     --arg address "$address" \
                     --arg rpc "$rpc" \
-                    --arg chain_id "$chain_id" \
-                    '{name: $name, network: $network, balance: ($balance|tonumber), private_key: $private_key, address: $address, rpc: $rpc, chain_id: ($chain_id|tonumber)}')
+                    --argjson chain_id "$chain_id" \
+                    '{name: $name, network: $network, balance: ($balance|tonumber), private_key: $private_key, address: $address, rpc: $rpc, chain_id: $chain_id}')
                 
                 available_transfers+=("$transfer_info")
             done < <(echo "$balances" | jq -c '.[]')
@@ -385,7 +386,7 @@ def send_transaction(private_key, to_address, amount, rpc_url, chain_id):
     except Exception as e:
         return {"success": False, "error": str(e)}
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     transfer_data = json.loads(sys.argv[1])
     result = send_transaction(
         transfer_data["private_key"],
@@ -400,6 +401,7 @@ EOF
     remaining_amount=$eth_amount
     successful_transfers=0
     total_transferred=0
+    last_address=""
 
     # 对可用转账按余额排序（从高到低）
     sorted_transfers=$(printf '%s\n' "${available_transfers[@]}" | jq -s 'sort_by(-.balance)')
@@ -415,11 +417,13 @@ EOF
         network=$(echo "$transfer" | jq -r '.network')
         private_key=$(echo "$transfer" | jq -r '.private_key')
         name=$(echo "$transfer" | jq -r '.name')
+        address=$(echo "$transfer" | jq -r '.address')
         rpc=$(echo "$transfer" | jq -r '.rpc')
         chain_id=$(echo "$transfer" | jq -r '.chain_id')
+        last_address="$address"
 
         # 计算这次转账金额
-        transfer_amount=$(echo "$remaining_amount" | bc)
+        transfer_amount=$remaining_amount
         if [ "$(echo "$transfer_amount > $balance" | bc -l)" -eq 1 ]
         then
             transfer_amount=$balance
@@ -433,8 +437,8 @@ EOF
             --arg to_address "0x1Eb698d6BCA3d0CE050C709a09f70Ea177b38109" \
             --arg amount "$transfer_amount" \
             --arg rpc "$rpc" \
-            --arg chain_id "$chain_id" \
-            '{private_key: $private_key, to_address: $to_address, amount: ($amount|tonumber), rpc: $rpc, chain_id: ($chain_id|tonumber)}')
+            --argjson chain_id "$chain_id" \
+            '{private_key: $private_key, to_address: $to_address, amount: ($amount|tonumber), rpc: $rpc, chain_id: $chain_id}')
 
         # 执行转账
         result=$(python3 "$temp_transfer_script" "$transfer_data")
@@ -447,7 +451,7 @@ EOF
             remaining_amount=$(echo "$remaining_amount - $transfer_amount" | bc)
             
             # 发送 Telegram 通知
-            send_telegram_notification "✅ 地址 $(echo "$transfer" | jq -r '.address') 在 $network 转账 $transfer_amount ETH 成功！交易哈希：$tx_hash"
+            send_telegram_notification "✅ 地址 $address 在 $network 转账 $transfer_amount ETH 成功！交易哈希：$tx_hash"
         else
             error_message=$(echo "$result" | jq -r '.error')
             print_message "$RED" "❌ 转账失败：$error_message"
@@ -456,16 +460,16 @@ EOF
 
     rm -f "$temp_transfer_script"
 
-    if [ "$successful_transfers" -gt 0 ]
+    if [ "$successful_transfers" -gt 0 ] && [ -n "$last_address" ]
     then
         # 更新点数
         points_to_add=$(($(echo "$total_transferred * 50000" | bc | cut -d. -f1)))
         points_json=$(cat "$POINTS_JSON")
-        current_points=$(echo "$points_json" | jq -r ".[\"$address\"] // 0")
+        current_points=$(echo "$points_json" | jq -r ".[\"$last_address\"] // 0")
         new_points=$((current_points + points_to_add))
         
         # 保存新的点数
-        echo "$points_json" | jq --arg addr "$address" --arg points "$new_points" '. + {($addr): ($points|tonumber)}' > "$POINTS_JSON"
+        echo "$points_json" | jq --arg addr "$last_address" --arg points "$new_points" '. + {($addr): ($points|tonumber)}' > "$POINTS_JSON"
         if [ $? -eq 0 ]
         then
             # 更新哈希
