@@ -1177,4 +1177,85 @@ delete_script() {
     read -p "> " confirm
     if [ "$confirm" = "y" ] || [ "$confirm" = "Y" ]; then
         pm2 stop "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >/dev/null 2>&1
-        pm2 delete "$PM2_PROCESS_NAME"
+        pm2 delete "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >/dev/null 2>&1
+
+        rm -f "$ARB_SCRIPT" "$OP_SCRIPT" "$BALANCE_SCRIPT" "$CONFIG_FILE" "$DIRECTION_FILE" "$RPC_CONFIG_FILE" "$CONFIG_JSON" "$POINTS_JSON" "$POINTS_HASH_FILE"
+        echo -e "${GREEN}✅ 已删除所有脚本和配置！🎉${NC}"
+    fi
+}
+
+# === 开始运行 ===
+start_running() {
+    validate_points_file
+    direction=$(cat "$DIRECTION_FILE" 2>/dev/null || echo "arb_to_uni")
+    if [ "$direction" = "arb_to_uni" ]; then
+        echo -e "${CYAN}🚀 正在启动 ARB -> UNI 跨链脚本...${NC}"
+        pm2 start "$ARB_SCRIPT" --name "$PM2_PROCESS_NAME" --interpreter "$VENV_PATH/bin/python3" --time
+    else
+        echo -e "${CYAN}🚀 正在启动 OP <-> UNI 跨链脚本...${NC}"
+        pm2 start "$OP_SCRIPT" --name "$PM2_PROCESS_NAME" --interpreter "$VENV_PATH/bin/python3" --time
+    fi
+    echo -e "${CYAN}🚀 正在启动余额查询脚本...${NC}"
+    pm2 start "$BALANCE_SCRIPT" --name "$PM2_BALANCE_NAME" --interpreter "$VENV_PATH/bin/python3" --time
+    echo -e "${GREEN}✅ 脚本已启动！🎉${NC}"
+}
+
+# === 主菜单 ===
+main_menu() {
+    while true; do
+        banner
+        echo -e "${CYAN}🔧 主菜单：${NC}"
+        echo "1. 管理私钥 🔑"
+        echo "2. 管理 RPC ⚙️"
+        echo "3. 管理速度 ⏱️"
+        echo "4. 管理 Telegram 🌐"
+        echo "5. 选择跨链方向 🌉"
+        echo "6. 开始运行 🚀"
+        echo "7. 停止运行 🛑"
+        echo "8. 查看日志 📜"
+        echo "9. 充值点数 💰"
+        echo "10. 删除脚本 🗑️"
+        echo "0. 退出 👋"
+        read -p "> " choice
+        case $choice in
+            1) manage_private_keys ;;
+            2) manage_rpc ;;
+            3) manage_speed ;;
+            4) manage_telegram ;;
+            5) select_direction ;;
+            6) start_running ;;
+            7) stop_running ;;
+            8) view_logs ;;
+            9) recharge_points ;;
+            10) delete_script ;;
+            0) 
+                echo -e "${GREEN}👋 感谢使用，再见！${NC}"
+                exit 0
+                ;;
+            *)
+                echo -e "${RED}❗ 无效选项！😢${NC}" >&2
+                ;;
+        esac
+    done
+}
+
+# === 主函数 ===
+main() {
+    # 检查 root 权限
+    check_root
+
+    # 初始化配置
+    init_config
+
+    # 安装依赖
+    install_dependencies
+
+    # 下载 Python 脚本
+    download_python_scripts
+
+    # 启动主菜单
+    main_menu
+}
+
+# 启动主函数
+main
