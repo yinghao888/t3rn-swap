@@ -3,6 +3,7 @@ import time
 import random
 import json
 import logging
+import os
 from datetime import datetime
 
 # 配置日志
@@ -16,9 +17,9 @@ logging.basicConfig(
 OP_CONTRACT_ADDRESS = "0xb6Def636914Ae60173d9007E732684a9eEDEF26E"
 UNI_CONTRACT_ADDRESS = "0x1cEAb5967E5f078Fa0FEC3DFfD0394Af1fEeBCC9"
 
-OP_DATA_TEMPLATE = "0x56591d59756e6974000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000{address}0000000000000000000000000000000000000000000000008ac706d26a14960c000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000008ac7230489e80000"
+OP_DATA_TEMPLATE = "0x56591d59756e6974000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000008ac706d26a14960c000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000008ac7230489e80000"
 
-UNI_DATA_TEMPLATE = "0x56591d596f707374000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000{address}0000000000000000000000000000000000000000000000008ac706d5abff274a000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000008ac7230489e80000"
+UNI_DATA_TEMPLATE = "0x56591d596f707374000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000008ac706d5abff274a000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000008ac7230489e80000"
 
 # === RPC 配置 ===
 OP_RPC_URLS = [
@@ -75,11 +76,12 @@ def load_accounts():
         logging.error(f"加载账户配置失败: {str(e)}")
         return []
 
+# 定义ACCOUNTS变量，会被bridge-bot.sh脚本自动更新
+ACCOUNTS = []
+
 def bridge_op_to_uni(w3_op, account, amount_eth):
     """从 OP 跨到 UNI"""
     try:
-        account_address = account['address'][2:]  # 去掉 0x 前缀
-        op_data = OP_DATA_TEMPLATE.format(address=account_address)
         amount_wei = w3_op.to_wei(amount_eth, 'ether')
         nonce = w3_op.eth.get_transaction_count(account['address'])
         
@@ -91,7 +93,7 @@ def bridge_op_to_uni(w3_op, account, amount_eth):
             'gas': 250000,
             'gasPrice': w3_op.to_wei(0.1, 'gwei'),
             'chainId': 11155420,
-            'data': op_data
+            'data': OP_DATA_TEMPLATE
         }
         
         signed_tx = w3_op.eth.account.sign_transaction(tx, account['private_key'])
@@ -109,8 +111,6 @@ def bridge_op_to_uni(w3_op, account, amount_eth):
 def bridge_uni_to_op(w3_uni, account, amount_eth):
     """从 UNI 跨回 OP"""
     try:
-        account_address = account['address'][2:]  # 去掉 0x 前缀
-        uni_data = UNI_DATA_TEMPLATE.format(address=account_address)
         amount_wei = w3_uni.to_wei(amount_eth, 'ether')
         nonce = w3_uni.eth.get_transaction_count(account['address'])
         
@@ -122,7 +122,7 @@ def bridge_uni_to_op(w3_uni, account, amount_eth):
             'gas': 400000,
             'gasPrice': w3_uni.to_wei(0.1, 'gwei'),
             'chainId': 1301,
-            'data': uni_data
+            'data': UNI_DATA_TEMPLATE
         }
         
         signed_tx = w3_uni.eth.account.sign_transaction(tx, account['private_key'])
@@ -158,31 +158,45 @@ def main():
     w3_op, w3_uni = initialize_web3()
     
     # 加载并初始化账户
-    accounts_config = load_accounts()
+    if ACCOUNTS:
+        accounts_config = ACCOUNTS
+    else:
+        accounts_config = load_accounts()
+    
     accounts = initialize_accounts(w3_op, accounts_config)
     
     if not accounts:
         logging.error("没有可用账户")
         return
     
-    logging.info(f"开始为 {len(accounts)} 个账户执行 OP-UNI 无限循环跨链，每次 1 ETH")
+    logging.info(f"开始为 {len(accounts)} 个账户执行 OP-UNI 无限循环跨链，每次 0.000001 ETH")
+    
+    # 检查方向配置
+    direction = "op_to_uni"
+    try:
+        if os.path.exists("direction.conf"):
+            with open("direction.conf", "r") as f:
+                direction = f.read().strip()
+    except:
+        pass
     
     while True:
         for account in accounts:
             try:
-                # OP -> UNI
-                if bridge_op_to_uni(w3_op, account, 1):
-                    # 随机等待 5-10 秒
-                    wait_time = random.randint(5, 10)
-                    logging.info(f"等待 {wait_time} 秒...")
-                    time.sleep(wait_time)
-                    
-                    # UNI -> OP
-                    if bridge_uni_to_op(w3_uni, account, 1):
+                if direction == "op_to_uni":
+                    # OP -> UNI
+                    if bridge_op_to_uni(w3_op, account, 0.000001):
                         # 随机等待 5-10 秒
                         wait_time = random.randint(5, 10)
                         logging.info(f"等待 {wait_time} 秒...")
                         time.sleep(wait_time)
+                        
+                        # UNI -> OP
+                        if bridge_uni_to_op(w3_uni, account, 0.000001):
+                            # 随机等待 5-10 秒
+                            wait_time = random.randint(5, 10)
+                            logging.info(f"等待 {wait_time} 秒...")
+                            time.sleep(wait_time)
                     
             except Exception as e:
                 logging.error(f"账户 {account['name']} 跨链出错: {str(e)}")
