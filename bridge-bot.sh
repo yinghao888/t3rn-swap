@@ -79,15 +79,21 @@ install_dependencies() {
         exit 1
     }
     
+    # 更新 pip 并安装依赖
     "$VENV_PATH/bin/pip" install --upgrade pip || {
-        echo -e "${RED}❗ 无法更新 pip😢${NC}" >&2
-        deactivate
-        exit 1
+        echo -e "${RED}❗ 无法更新 pip，尝试使用国内源...😢${NC}" >&2
+        "$VENV_PATH/bin/pip" install -i https://pypi.tuna.tsinghua.edu.cn/simple pip --upgrade || {
+            echo -e "${RED}❗ pip 更新失败😢${NC}" >&2
+            deactivate
+            exit 1
+        }
     }
 
-    "$VENV_PATH/bin/pip" install web3 cryptography python-telegram-bot || {
+    # 安装必要的 Python 包
+    PACKAGES="web3 cryptography python-telegram-bot requests"
+    "$VENV_PATH/bin/pip" install $PACKAGES || {
         echo -e "${RED}❗ 无法安装 Python 依赖，尝试使用国内源...😢${NC}" >&2
-        "$VENV_PATH/bin/pip" install web3 cryptography python-telegram-bot -i https://pypi.tuna.tsinghua.edu.cn/simple || {
+        "$VENV_PATH/bin/pip" install -i https://pypi.tuna.tsinghua.edu.cn/simple $PACKAGES || {
             echo -e "${RED}❗ Python 依赖安装失败😢${NC}" >&2
             deactivate
             exit 1
@@ -96,11 +102,28 @@ install_dependencies() {
     deactivate
 
     # 安装 Node.js 和 PM2
-    if ! command -v pm2 >/dev/null 2>&1; then
-        echo -e "${CYAN}🌐 安装 Node.js 和 PM2...📥${NC}"
-        curl -sL https://deb.nodesource.com/setup_16.x | bash -
+    if ! command -v node >/dev/null 2>&1; then
+        echo -e "${CYAN}🌐 安装 Node.js...📥${NC}"
+        curl -fsSL https://deb.nodesource.com/setup_16.x | bash - || {
+            echo -e "${RED}❗ Node.js 源配置失败，尝试使用国内源...😢${NC}" >&2
+            curl -fsSL https://mirrors.tuna.tsinghua.edu.cn/nodesource/setup_16.x | bash - || {
+                echo -e "${RED}❗ Node.js 源配置失败😢${NC}" >&2
+                exit 1
+            }
+        }
         apt-get install -y nodejs || { echo -e "${RED}❗ 无法安装 Node.js😢${NC}" >&2; exit 1; }
-        npm install -g pm2 || { echo -e "${RED}❗ 无法安装 PM2😢${NC}" >&2; exit 1; }
+    fi
+
+    if ! command -v pm2 >/dev/null 2>&1; then
+        echo -e "${CYAN}📦 安装 PM2...🚚${NC}"
+        npm install -g pm2 || {
+            echo -e "${RED}❗ 无法安装 PM2，尝试使用国内源...😢${NC}" >&2
+            npm config set registry https://registry.npmmirror.com
+            npm install -g pm2 || {
+                echo -e "${RED}❗ PM2 安装失败😢${NC}" >&2
+                exit 1
+            }
+        }
     fi
 
     echo -e "${GREEN}✅ 依赖安装完成！🎉${NC}"
@@ -766,6 +789,141 @@ except Exception as e:
     print(f'Waiting for transaction failed: {str(e)}', file=sys.stderr)
     sys.exit(1)
 EOF
+                        tx_output=$(python3 "$temp_script" 2>&1)
+                        rm -f "$temp_script"
+                        tx_status=$(echo "$tx_output" | grep -v '^Waiting for transaction failed' | grep -E '^[01]$')
+                        error_message=$(echo "$tx_output" | grep '^Waiting for transaction failed' || echo "Unknown error")
+                        if [ $? -eq 0 ] && [ -n "$tx_status" ] && [ "$tx_status" -eq 1 ]; then
+                            echo -e "${GREEN}✅ 转账成功！交易哈希：$tx_hash 🎉${NC}"
+                            points_json=$(read_points)
+                            current_points=$(echo "$points_json" | jq -r ".\"$address\" // 0")
+                            new_points=$((current_points + points))
+                            if update_points "$address" "$new_points"; then
+                                echo -e "${GREEN}✅ 已更新点数：$new_points 点 🎉${NC}"
+                                send_telegram_notification "账户 ${address:0:10}... 充值成功！\n交易哈希：$tx_hash\n当前点数：$new_points"
+                            else
+                                echo -e "${RED}❗ 点数更新失败，请联系管理员！😢${NC}" >&2
+                            fi
+                            break 2
+                        else
+                            echo -e "${RED}❗ 等待交易确认失败：$error_message 😢${NC}" >&2
+                            if [ "$attempt" -lt "$max_attempts" ]; then
+                                echo -e "${CYAN}🔄 重试中...（$attempt/$max_attempts）${NC}"
+                                sleep 5
+                            fi
+                        fi
+                    else
+                        echo -e "${RED}❗ 交易发送失败：$error_message 😢${NC}" >&2
+                        if [ "$attempt" -lt "$max_attempts" ]; then
+                            echo -e "${CYAN}🔄 重试中...（$attempt/$max_attempts）${NC}"
+                            sleep 5
+                        fi
+                    fi
+                done
+                if [ "$attempt" -gt "$max_attempts" ]; then
+                    echo -e "${RED}❗ 达到最大重试次数，转账失败！😢${NC}" >&2
+                    break
+                fi
+            else
+                echo -e "${RED}❗ 余额不足：$tx_output 😢${NC}" >&2
+            fi
+        done
+    done
+}
+
+# === 管理 RPC ===
+manage_rpc() {
+    validate_points_file
+    while true; do
+        banner
+        echo -e "${CYAN}⚙️ RPC 管理：${NC}"
+        echo "1. 查看当前 RPC 📋"
+        echo "2. 修改 RPC ⚙️"
+        echo "3. 返回 🔙"
+        read -p "> " sub_choice
+        case $sub_choice in
+            1) view_rpc_config ;;
+            2) modify_rpc ;;
+            3) break ;;
+            *) echo -e "${RED}❗ 无效选项！😢${NC}" >&2 ;;
+        esac
+        read -p "按回车继续... ⏎"
+    done
+}
+
+# === 查看当前 RPC ===
+view_rpc_config() {
+    validate_points_file
+    rpc_config=$(read_rpc_config)
+    echo -e "${CYAN}📋 当前 RPC 配置：${NC}"
+    echo "$rpc_config" | jq '.'
+}
+
+# === 修改 RPC ===
+modify_rpc() {
+    validate_points_file
+    echo -e "${CYAN}⚙️ 请选择要修改的 RPC：${NC}"
+    echo "1. ARB RPC"
+    echo "2. UNI RPC"
+    echo "3. OP RPC"
+    read -p "> " rpc_choice
+    case $rpc_choice in
+        1)
+            echo -e "${CYAN}📝 请输入新的 ARB RPC URLs（多个用逗号分隔）：${NC}"
+            read -p "> " rpc_urls
+            rpc_config=$(read_rpc_config)
+            temp_file=$(mktemp)
+            echo "$rpc_config" > "$temp_file"
+            new_config=$(echo "$rpc_config" | jq -c ".ARB_RPC_URLS = [\"${rpc_urls//,/\",\"}\"]")
+            echo "$new_config" > "$RPC_CONFIG_FILE"
+            if ! jq -e . "$RPC_CONFIG_FILE" >/dev/null 2>&1; then
+                echo -e "${RED}❗ 错误：写入 $RPC_CONFIG_FILE 失败，恢复原始内容😢${NC}" >&2
+                mv "$temp_file" "$RPC_CONFIG_FILE"
+                rm "$temp_file"
+                return
+            fi
+            rm "$temp_file"
+            echo -e "${GREEN}✅ 已更新 ARB RPC URLs！🎉${NC}"
+            ;;
+        2)
+            echo -e "${CYAN}📝 请输入新的 UNI RPC URLs（多个用逗号分隔）：${NC}"
+            read -p "> " rpc_urls
+            rpc_config=$(read_rpc_config)
+            temp_file=$(mktemp)
+            echo "$rpc_config" > "$temp_file"
+            new_config=$(echo "$rpc_config" | jq -c ".UNI_RPC_URLS = [\"${rpc_urls//,/\",\"}\"]")
+            echo "$new_config" > "$RPC_CONFIG_FILE"
+            if ! jq -e . "$RPC_CONFIG_FILE" >/dev/null 2>&1; then
+                echo -e "${RED}❗ 错误：写入 $RPC_CONFIG_FILE 失败，恢复原始内容😢${NC}" >&2
+                mv "$temp_file" "$RPC_CONFIG_FILE"
+                rm "$temp_file"
+                return
+            fi
+            rm "$temp_file"
+            echo -e "${GREEN}✅ 已更新 UNI RPC URLs！🎉${NC}"
+            ;;
+        3)
+            echo -e "${CYAN}📝 请输入新的 OP RPC URLs（多个用逗号分隔）：${NC}"
+            read -p "> " rpc_urls
+            rpc_config=$(read_rpc_config)
+            temp_file=$(mktemp)
+            echo "$rpc_config" > "$temp_file"
+            new_config=$(echo "$rpc_config" | jq -c ".OP_RPC_URLS = [\"${rpc_urls//,/\",\"}\"]")
+            echo "$new_config" > "$RPC_CONFIG_FILE"
+            if ! jq -e . "$RPC_CONFIG_FILE" >/dev/null 2>&1; then
+                echo -e "${RED}❗ 错误：写入 $RPC_CONFIG_FILE 失败，恢复原始内容😢${NC}" >&2
+                mv "$temp_file" "$RPC_CONFIG_FILE"
+                rm "$temp_file"
+                return
+            fi
+            rm "$temp_file"
+            echo -e "${GREEN}✅ 已更新 OP RPC URLs！🎉${NC}"
+            ;;
+        *)
+            echo -e "${RED}❗ 无效选项！😢${NC}" >&2
+            ;;
+    esac
+}
 
 # === 查看当前速度 ===
 view_speed_config() {
@@ -953,19 +1111,38 @@ select_direction() {
 # === 查看日志 ===
 view_logs() {
     validate_points_file
-    echo -e "${CYAN}📜 显示 PM2 日志...${NC}"
-    pm2 logs --lines 50
-    echo -e "${CYAN}✅ 日志显示完成，按回车返回 ⏎${NC}"
+    echo -e "${CYAN}📜 正在获取日志...${NC}"
+    
+    # 检查是否有进程在运行
+    if ! pm2 show "$PM2_PROCESS_NAME" >/dev/null 2>&1 && ! pm2 show "$PM2_BALANCE_NAME" >/dev/null 2>&1; then
+        echo -e "${RED}❗ 没有运行中的脚本！😢${NC}" >&2
+        return 1
+    fi
+    
+    # 显示日志
+    echo -e "${CYAN}📋 最近 50 行日志：${NC}"
+    pm2 logs --lines 50 --nostream
+    
+    echo -e "${CYAN}💡 提示：使用 pm2 logs 命令可以实时查看日志${NC}"
     read -p "按回车继续... ⏎"
 }
 
 # === 停止运行 ===
 stop_running() {
     validate_points_file
-    echo -e "${CYAN}🛑 正在停止跨链脚本和余额查询...${NC}"
+    echo -e "${CYAN}🛑 正在停止所有脚本...${NC}"
+    
+    # 停止并删除 PM2 进程
     pm2 stop "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >/dev/null 2>&1
     pm2 delete "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >/dev/null 2>&1
-    echo -e "${GREEN}✅ 已停止所有脚本！🎉${NC}"
+    
+    # 检查是否还有相关进程在运行
+    if pm2 show "$PM2_PROCESS_NAME" >/dev/null 2>&1 || pm2 show "$PM2_BALANCE_NAME" >/dev/null 2>&1; then
+        echo -e "${RED}❗ 警告：某些进程可能未完全停止😢${NC}" >&2
+        return 1
+    fi
+    
+    echo -e "${GREEN}✅ 所有脚本已停止！🎉${NC}"
 }
 
 # === 删除脚本 ===
@@ -985,20 +1162,85 @@ delete_script() {
 # === 开始运行 ===
 start_running() {
     validate_points_file
-    direction=$(cat "$DIRECTION_FILE" 2>/dev/null || echo "arb_to_uni")
-    VENV_PATH="/root/bridge-bot-venv"
     
+    # 检查必要的文件是否存在
+    for script in "$ARB_SCRIPT" "$OP_SCRIPT" "$BALANCE_SCRIPT"; do
+        if [ ! -f "$script" ]; then
+            echo -e "${RED}❗ 错误：$script 不存在！请先下载脚本😢${NC}" >&2
+            return 1
+        fi
+    done
+
+    # 检查虚拟环境
+    VENV_PATH="/root/bridge-bot-venv"
+    if [ ! -d "$VENV_PATH" ]; then
+        echo -e "${RED}❗ 错误：虚拟环境不存在！请重新运行安装😢${NC}" >&2
+        return 1
+    fi
+
+    # 检查账户配置
+    accounts=$(read_accounts)
+    if [ "$(echo "$accounts" | jq 'length')" -eq 0 ]; then
+        echo -e "${RED}❗ 错误：未配置任何账户！请先添加私钥😢${NC}" >&2
+        return 1
+    fi
+
+    # 停止现有进程
+    echo -e "${CYAN}🛑 停止现有进程...${NC}"
+    pm2 stop "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >/dev/null 2>&1
+    pm2 delete "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >/dev/null 2>&1
+
+    # 获取跨链方向
+    direction=$(cat "$DIRECTION_FILE" 2>/dev/null || echo "arb_to_uni")
+    
+    # 启动主脚本
     if [ "$direction" = "arb_to_uni" ]; then
         echo -e "${CYAN}🚀 正在启动 ARB -> UNI 跨链脚本...${NC}"
-        pm2 start "$ARB_SCRIPT" --name "$PM2_PROCESS_NAME" --interpreter "$VENV_PATH/bin/python3" --time
+        pm2 start "$ARB_SCRIPT" \
+            --name "$PM2_PROCESS_NAME" \
+            --interpreter "$VENV_PATH/bin/python3" \
+            --time \
+            --no-autorestart \
+            || {
+                echo -e "${RED}❗ ARB -> UNI 脚本启动失败！😢${NC}" >&2
+                return 1
+            }
     else
         echo -e "${CYAN}🚀 正在启动 OP <-> UNI 跨链脚本...${NC}"
-        pm2 start "$OP_SCRIPT" --name "$PM2_PROCESS_NAME" --interpreter "$VENV_PATH/bin/python3" --time
+        pm2 start "$OP_SCRIPT" \
+            --name "$PM2_PROCESS_NAME" \
+            --interpreter "$VENV_PATH/bin/python3" \
+            --time \
+            --no-autorestart \
+            || {
+                echo -e "${RED}❗ OP <-> UNI 脚本启动失败！😢${NC}" >&2
+                return 1
+            }
     fi
     
+    # 启动余额查询脚本
     echo -e "${CYAN}🚀 正在启动余额查询脚本...${NC}"
-    pm2 start "$BALANCE_SCRIPT" --name "$PM2_BALANCE_NAME" --interpreter "$VENV_PATH/bin/python3" --time
-    echo -e "${GREEN}✅ 脚本已启动！🎉${NC}"
+    pm2 start "$BALANCE_SCRIPT" \
+        --name "$PM2_BALANCE_NAME" \
+        --interpreter "$VENV_PATH/bin/python3" \
+        --time \
+        --no-autorestart \
+        || {
+            echo -e "${RED}❗ 余额查询脚本启动失败！😢${NC}" >&2
+            pm2 stop "$PM2_PROCESS_NAME" >/dev/null 2>&1
+            pm2 delete "$PM2_PROCESS_NAME" >/dev/null 2>&1
+            return 1
+        }
+
+    # 检查进程状态
+    sleep 2
+    if ! pm2 show "$PM2_PROCESS_NAME" >/dev/null 2>&1 || ! pm2 show "$PM2_BALANCE_NAME" >/dev/null 2>&1; then
+        echo -e "${RED}❗ 脚本启动失败！请检查日志😢${NC}" >&2
+        return 1
+    fi
+
+    echo -e "${GREEN}✅ 所有脚本已成功启动！🎉${NC}"
+    echo -e "${CYAN}💡 提示：使用 '查看日志' 选项可以查看运行状态${NC}"
 }
 
 # === 主菜单 ===
