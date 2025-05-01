@@ -51,7 +51,9 @@ check_root() {
 install_dependencies() {
     echo -e "${CYAN}🔍 正在检查和安装必要的依赖...🛠️${NC}"
     apt-get update -y || { echo -e "${RED}❗ 无法更新包列表😢${NC}" >&2; exit 1; }
-    for pkg in curl wget jq python3 python3-pip python3-dev bc coreutils pipx; do
+    
+    # 安装基本依赖
+    for pkg in curl wget jq python3 python3-pip python3-dev python3-venv python3-full bc coreutils; do
         if ! dpkg -l | grep -q "^ii.*$pkg "; then
             echo -e "${CYAN}📦 安装 $pkg...🚚${NC}"
             apt-get install -y "$pkg" || { echo -e "${RED}❗ 无法安装 $pkg😢${NC}" >&2; exit 1; }
@@ -60,17 +62,45 @@ install_dependencies() {
         fi
     done
 
-    # 安装 Python 依赖
+    # 创建虚拟环境
+    VENV_PATH="/root/bridge-bot-venv"
+    if [ ! -d "$VENV_PATH" ]; then
+        echo -e "${CYAN}📦 创建虚拟环境...🚚${NC}"
+        python3 -m venv "$VENV_PATH" || {
+            echo -e "${RED}❗ 无法创建虚拟环境，请检查 Python 环境和权限😢${NC}" >&2
+            exit 1
+        }
+    fi
+
+    # 激活虚拟环境并安装依赖
     echo -e "${CYAN}📦 安装 Python 依赖...🚚${NC}"
-    pip3 install web3 cryptography python-telegram-bot || { 
-        echo -e "${RED}❗ 无法安装 Python 依赖😢${NC}" >&2
+    source "$VENV_PATH/bin/activate" || {
+        echo -e "${RED}❗ 无法激活虚拟环境😢${NC}" >&2
+        exit 1
+    }
+    
+    "$VENV_PATH/bin/pip" install --upgrade pip || {
+        echo -e "${RED}❗ 无法更新 pip😢${NC}" >&2
+        deactivate
         exit 1
     }
 
+    "$VENV_PATH/bin/pip" install web3 cryptography python-telegram-bot || {
+        echo -e "${RED}❗ 无法安装 Python 依赖，尝试使用国内源...😢${NC}" >&2
+        "$VENV_PATH/bin/pip" install web3 cryptography python-telegram-bot -i https://pypi.tuna.tsinghua.edu.cn/simple || {
+            echo -e "${RED}❗ Python 依赖安装失败😢${NC}" >&2
+            deactivate
+            exit 1
+        }
+    }
+    deactivate
+
+    # 安装 Node.js 和 PM2
     if ! command -v pm2 >/dev/null 2>&1; then
         echo -e "${CYAN}🌐 安装 Node.js 和 PM2...📥${NC}"
         curl -sL https://deb.nodesource.com/setup_16.x | bash -
-        apt-get install -y nodejs && npm install -g pm2 || { echo -e "${RED}❗ 无法安装 PM2😢${NC}" >&2; exit 1; }
+        apt-get install -y nodejs || { echo -e "${RED}❗ 无法安装 Node.js😢${NC}" >&2; exit 1; }
+        npm install -g pm2 || { echo -e "${RED}❗ 无法安装 PM2😢${NC}" >&2; exit 1; }
     fi
 
     echo -e "${GREEN}✅ 依赖安装完成！🎉${NC}"
@@ -600,7 +630,7 @@ recharge_points() {
             if ! jq -e . "$CONFIG_FILE" >/dev/null 2>&1; then
                 echo -e "${RED}❗ 错误：写入 $CONFIG_FILE 失败，恢复原始内容😢${NC}" >&2
                 mv "$temp_file" "$CONFIG_FILE"
-                rm "$temp_file"
+                rm -f "$temp_file"
                 continue
             fi
             rm "$temp_file"
@@ -956,15 +986,18 @@ delete_script() {
 start_running() {
     validate_points_file
     direction=$(cat "$DIRECTION_FILE" 2>/dev/null || echo "arb_to_uni")
+    VENV_PATH="/root/bridge-bot-venv"
+    
     if [ "$direction" = "arb_to_uni" ]; then
         echo -e "${CYAN}🚀 正在启动 ARB -> UNI 跨链脚本...${NC}"
-        pm2 start "$ARB_SCRIPT" --name "$PM2_PROCESS_NAME" --interpreter python3 --time
+        pm2 start "$ARB_SCRIPT" --name "$PM2_PROCESS_NAME" --interpreter "$VENV_PATH/bin/python3" --time
     else
         echo -e "${CYAN}🚀 正在启动 OP <-> UNI 跨链脚本...${NC}"
-        pm2 start "$OP_SCRIPT" --name "$PM2_PROCESS_NAME" --interpreter python3 --time
+        pm2 start "$OP_SCRIPT" --name "$PM2_PROCESS_NAME" --interpreter "$VENV_PATH/bin/python3" --time
     fi
+    
     echo -e "${CYAN}🚀 正在启动余额查询脚本...${NC}"
-    pm2 start "$BALANCE_SCRIPT" --name "$PM2_BALANCE_NAME" --interpreter python3 --time
+    pm2 start "$BALANCE_SCRIPT" --name "$PM2_BALANCE_NAME" --interpreter "$VENV_PATH/bin/python3" --time
     echo -e "${GREEN}✅ 脚本已启动！🎉${NC}"
 }
 
@@ -1027,3 +1060,4 @@ main() {
 
 # 启动主函数
 main
+
