@@ -262,7 +262,7 @@ send_telegram_notification() {
     fi
 }
 
-# === 查询账户余额 ===
+# === 获取账户余额 ===
 get_account_balance() {
     local address="$1"
     local chain="$2"
