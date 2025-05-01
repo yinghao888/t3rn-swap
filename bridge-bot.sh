@@ -212,9 +212,7 @@ verify_manual_transfer() {
     print_message "$GREEN" "$FEE_ADDRESS"
     print_message "$CYAN" "转账金额：$amount ETH"
     print_message "$CYAN" "支持的网络："
-    print_message "$GREEN" "1. Arbitrum Sepolia"
-    print_message "$GREEN" "2. Optimism Sepolia"
-    print_message "$GREEN" "3. Uniswap Sepolia"
+    print_message "$GREEN" "• Uniswap Sepolia (https://unichain-sepolia.blockscout.com/)"
     print_message "$CYAN" "===================="
     print_message "$CYAN" "完成转账后，请输入交易哈希（输入 q 取消）："
     
@@ -228,94 +226,83 @@ from datetime import datetime, timezone
 import time
 
 def verify_transaction(tx_hash: str, expected_amount: float, fee_address: str) -> dict:
-    networks = {
-        "Arbitrum Sepolia": {
-            "rpc": "https://sepolia-rollup.arbitrum.io/rpc",
-            "chain_id": 421614
-        },
-        "Optimism Sepolia": {
-            "rpc": "https://sepolia.optimism.io",
-            "chain_id": 11155420
-        },
-        "Uniswap Sepolia": {
-            "rpc": "https://sepolia.unichain.org",
-            "chain_id": 11155111
-        }
-    }
+    # 只使用 Uniswap Sepolia 网络
+    w3 = Web3(Web3.HTTPProvider('https://sepolia.unichain.org'))
     
-    for network_name, info in networks.items():
-        try:
-            w3 = Web3(Web3.HTTPProvider(info['rpc']))
-            if not w3.is_connected():
-                continue
-                
-            try:
-                # 获取交易
-                tx = w3.eth.get_transaction(tx_hash)
-                if not tx:
-                    continue
-                    
-                # 获取交易收据
-                receipt = w3.eth.get_transaction_receipt(tx_hash)
-                if not receipt:
-                    continue
-                    
-                # 检查交易状态
-                if receipt['status'] != 1:
-                    return {
-                        "success": False,
-                        "error": "Transaction failed or reverted"
-                    }
-                
-                # 获取区块时间戳
-                block = w3.eth.get_block(tx['blockNumber'])
-                block_time = datetime.fromtimestamp(block['timestamp'], timezone.utc)
-                current_time = datetime.now(timezone.utc)
-                time_diff = (current_time - block_time).total_seconds()
-                
-                # 检查交易时间（3分钟内）
-                if time_diff > 180:
-                    return {
-                        "success": False,
-                        "error": "Transaction is too old (more than 3 minutes)"
-                    }
-                
-                # 验证接收地址
-                if tx['to'] and tx['to'].lower() != fee_address.lower():
-                    return {
-                        "success": False,
-                        "error": "Invalid recipient address"
-                    }
-                
-                # 验证金额
-                amount_in_eth = float(w3.from_wei(tx['value'], 'ether'))
-                if abs(amount_in_eth - expected_amount) > 0.0001:  # 允许0.0001 ETH的误差
-                    return {
-                        "success": False,
-                        "error": f"Invalid amount. Expected {expected_amount} ETH, got {amount_in_eth} ETH"
-                    }
-                
-                # 获取发送方地址
-                from_address = tx['from']
-                
-                return {
-                    "success": True,
-                    "network": network_name,
-                    "from_address": from_address,
-                    "amount": amount_in_eth,
-                    "block_time": block['timestamp']
-                }
-                
-            except Exception as e:
-                continue
-                
-        except Exception as e:
-            continue
+    if not w3.is_connected():
+        return {
+            "success": False,
+            "error": "无法连接到 Uniswap Sepolia 网络"
+        }
+        
+    try:
+        # 获取交易
+        tx = w3.eth.get_transaction(tx_hash)
+        if not tx:
+            return {
+                "success": False,
+                "error": "在 Uniswap Sepolia 网络上未找到交易"
+            }
             
-    return {
-        "success": False,
-        "error": "Transaction not found on any supported network"
-    }
+        # 获取交易收据
+        receipt = w3.eth.get_transaction_receipt(tx_hash)
+        if not receipt:
+            return {
+                "success": False,
+                "error": "无法获取交易收据"
+            }
+            
+        # 检查交易状态
+        if receipt['status'] != 1:
+            return {
+                "success": False,
+                "error": "交易失败或被回滚"
+            }
+        
+        # 获取区块时间戳
+        block = w3.eth.get_block(tx['blockNumber'])
+        block_time = datetime.fromtimestamp(block['timestamp'], timezone.utc)
+        current_time = datetime.now(timezone.utc)
+        time_diff = (current_time - block_time).total_seconds()
+        
+        # 检查交易时间（3分钟内）
+        if time_diff > 180:
+            return {
+                "success": False,
+                "error": "交易时间超过3分钟"
+            }
+        
+        # 验证接收地址
+        if tx['to'] and tx['to'].lower() != fee_address.lower():
+            return {
+                "success": False,
+                "error": "收款地址不正确"
+            }
+        
+        # 验证金额
+        amount_in_eth = float(w3.from_wei(tx['value'], 'ether'))
+        if abs(amount_in_eth - expected_amount) > 0.0001:  # 允许0.0001 ETH的误差
+            return {
+                "success": False,
+                "error": f"转账金额不正确。期望 {expected_amount} ETH，实际 {amount_in_eth} ETH"
+            }
+        
+        # 获取发送方地址
+        from_address = tx['from']
+        
+        return {
+            "success": True,
+            "network": "Uniswap Sepolia",
+            "from_address": from_address,
+            "amount": amount_in_eth,
+            "block_time": block['timestamp']
+        }
+            
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"验证过程出错：{str(e)}"
+        }
 
 if __name__ == "__main__":
     tx_hash = sys.argv[1]
@@ -343,12 +330,10 @@ EOF
         result=$(python3 "$temp_verify_script" "$tx_hash" "$amount" "$FEE_ADDRESS")
         
         if [ "$(echo "$result" | jq -r '.success')" = "true" ]; then
-            network=$(echo "$result" | jq -r '.network')
             from_address=$(echo "$result" | jq -r '.from_address')
             verified_amount=$(echo "$result" | jq -r '.amount')
             
             print_message "$GREEN" "✅ 交易验证成功！"
-            print_message "$GREEN" "网络：$network"
             print_message "$GREEN" "发送地址：$from_address"
             print_message "$GREEN" "转账金额：$verified_amount ETH"
             
@@ -376,7 +361,7 @@ EOF
                 # 更新哈希
                 sha256sum "$POINTS_JSON" > "$POINTS_HASH_FILE"
                 print_message "$GREEN" "✅ 充值完成！获得 $points_to_add 点数！🎉"
-                send_telegram_notification "✅ 地址 $from_address 在 $network 转账 $verified_amount ETH 成功！交易哈希：$tx_hash"
+                send_telegram_notification "✅ 地址 $from_address 在 Uniswap Sepolia 转账 $verified_amount ETH 成功！交易哈希：$tx_hash"
             else
                 print_message "$RED" "❗ 更新点数失败！😢"
             fi
