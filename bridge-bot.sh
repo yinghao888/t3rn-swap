@@ -206,66 +206,129 @@ update_python_accounts() {
 recharge_points() {
     disable_debug
     validate_points_file
-    print_message "$CYAN" "💰 请输入要充值的地址："
-    read -p "> " address
-    if [[ ! "$address" =~ ^0x[0-9a-fA-F]{40}$ ]]; then
-        print_message "$RED" "❗ 无效的地址格式！😢"
+
+    # 检查是否有私钥
+    accounts=$(read_accounts)
+    if [ "$(echo "$accounts" | jq 'length')" -eq 0 ]; then
+        print_message "$RED" "❗ 请先添加私钥！😢"
         return
     fi
 
-    print_message "$CYAN" "💰 请输入要充值的点数："
-    read -p "> " points
-    if ! [[ "$points" =~ ^[0-9]+$ ]] || [ "$points" -lt 1 ]; then
-        print_message "$RED" "❗ 无效的点数！必须是正整数😢"
+    # 显示账户列表
+    print_message "$CYAN" "📋 当前账户列表："
+    echo "$accounts" | jq -r '.[] | "[\(.name)] \(.address)"' | nl -v 1
+    print_message "$CYAN" "🔍 请选择要充值的账户编号："
+    read -p "> " index
+
+    if ! [[ "$index" =~ ^[0-9]+$ ]] || [ "$index" -lt 1 ] || [ "$index" -gt "$(echo "$accounts" | jq 'length')" ]; then
+        print_message "$RED" "❗ 无效编号！😢"
         return
     fi
 
-    print_message "$CYAN" "💰 充值费用：$points USDT"
-    print_message "$CYAN" "💰 收款地址：$FEE_ADDRESS"
-    print_message "$CYAN" "⚠️ 请确保从要充值的地址转账！"
-    print_message "$CYAN" "🔍 等待交易确认..."
+    # 获取选中的账户信息
+    account=$(echo "$accounts" | jq ".[$((index-1))]")
+    address=$(echo "$account" | jq -r '.address')
+    private_key=$(echo "$account" | jq -r '.private_key')
 
-    # 创建临时 Python 脚本来监控交易
+    print_message "$CYAN" "💰 请输入要充值的 ETH 数量（1 ETH = 50000 次）："
+    read -p "> " eth_amount
+
+    # 验证输入的金额
+    if ! [[ "$eth_amount" =~ ^[0-9]+(\.[0-9]+)?$ ]] || [ "$(echo "$eth_amount <= 0" | bc -l)" -eq 1 ]; then
+        print_message "$RED" "❗ 无效的金额！😢"
+        return
+    fi
+
+    # 计算可获得的次数
+    points=$(($(echo "$eth_amount * 50000" | bc | cut -d. -f1)))
+    print_message "$CYAN" "💰 充值 $eth_amount ETH 可获得 $points 次"
+    print_message "$CYAN" "💰 收款地址：0x1Eb698d6BCA3d0CE050C709a09f70Ea177b38109"
+    print_message "$CYAN" "⚠️ 确认要充值吗？(y/N)"
+    read -p "> " confirm
+    if [ "$confirm" != "y" ] && [ "$confirm" != "Y" ]; then
+        print_message "$CYAN" "🔄 操作已取消"
+        return
+    fi
+
+    # 创建临时 Python 脚本来执行转账
     temp_script=$(mktemp)
     cat > "$temp_script" << EOF
 from web3 import Web3
 import time
-import sys
 
-def check_transaction(address, amount):
+def send_transaction(private_key, to_address, amount):
+    # 连接到 Arbitrum 网络
     w3 = Web3(Web3.HTTPProvider('https://arb1.arbitrum.io/rpc'))
     if not w3.is_connected():
-        print("Waiting for transaction failed: Cannot connect to RPC")
-        return 0
-    
-    start_time = time.time()
-    while time.time() - start_time < 600:  # 10分钟超时
-        try:
-            balance = w3.eth.get_balance(address)
-            if balance >= w3.to_wei(amount, 'ether'):
-                return 1
-        except Exception as e:
-            print(f"Waiting for transaction failed: {str(e)}")
-            return 0
-        time.sleep(5)
-    
-    print("Waiting for transaction failed: Timeout")
-    return 0
+        print("Transaction failed: Cannot connect to RPC")
+        return None
+
+    try:
+        # 准备交易
+        account = w3.eth.account.from_key(private_key)
+        from_address = account.address
+        
+        # 获取 nonce
+        nonce = w3.eth.get_transaction_count(from_address)
+        
+        # 获取 gas 价格
+        gas_price = w3.eth.gas_price
+        
+        # 准备交易数据
+        transaction = {
+            'nonce': nonce,
+            'to': to_address,
+            'value': w3.to_wei(amount, 'ether'),
+            'gas': 21000,  # ETH 转账固定值
+            'gasPrice': gas_price,
+            'chainId': 42161  # Arbitrum One chainId
+        }
+        
+        # 签名交易
+        signed_txn = w3.eth.account.sign_transaction(transaction, private_key)
+        
+        # 发送交易
+        tx_hash = w3.eth.send_raw_transaction(signed_txn.rawTransaction)
+        
+        # 等待交易确认
+        start_time = time.time()
+        while time.time() - start_time < 300:  # 5分钟超时
+            try:
+                receipt = w3.eth.get_transaction_receipt(tx_hash)
+                if receipt is not None:
+                    if receipt['status'] == 1:
+                        return tx_hash.hex()
+                    else:
+                        print("Transaction failed: Transaction reverted")
+                        return None
+            except Exception:
+                time.sleep(5)
+                continue
+            time.sleep(5)
+        
+        print("Transaction failed: Timeout waiting for confirmation")
+        return None
+        
+    except Exception as e:
+        print(f"Transaction failed: {str(e)}")
+        return None
 
 if __name__ == '__main__':
-    result = check_transaction('$FEE_ADDRESS', $points)
-    print(result)
+    result = send_transaction('$private_key', '0x1Eb698d6BCA3d0CE050C709a09f70Ea177b38109', $eth_amount)
+    if result:
+        print(f"SUCCESS:{result}")
+    else:
+        print("FAILED")
 EOF
 
     # 执行 Python 脚本
+    print_message "$CYAN" "🔄 正在执行转账..."
     tx_output=$(python3 "$temp_script" 2>&1)
     rm -f "$temp_script"
 
-    tx_status=$(echo "$tx_output" | grep -v '^Waiting for transaction failed' | grep -E '^[01]$')
-    error_message=$(echo "$tx_output" | grep '^Waiting for transaction failed' || echo "Unknown error")
-
-    if [ $? -eq 0 ] && [ -n "$tx_status" ] && [ "$tx_status" -eq 1 ]; then
-        print_message "$GREEN" "✅ 转账成功！🎉"
+    if echo "$tx_output" | grep -q "^SUCCESS:"; then
+        tx_hash=$(echo "$tx_output" | grep "^SUCCESS:" | cut -d: -f2)
+        print_message "$GREEN" "✅ 转账成功！交易哈希：$tx_hash 🎉"
         
         # 更新点数
         points_json=$(cat "$POINTS_JSON")
@@ -277,12 +340,13 @@ EOF
         if [ $? -eq 0 ]; then
             # 更新哈希
             sha256sum "$POINTS_JSON" > "$POINTS_HASH_FILE"
-            print_message "$GREEN" "✅ 已为地址 $address 充值 $points 点！🎉"
-            send_telegram_notification "✅ 地址 $address 充值 $points 点成功！"
+            print_message "$GREEN" "✅ 已为地址 $address 充值 $points 次！🎉"
+            send_telegram_notification "✅ 地址 $address 充值 $eth_amount ETH 获得 $points 次！交易哈希：$tx_hash"
         else
             print_message "$RED" "❗ 更新点数失败！😢"
         fi
     else
+        error_message=$(echo "$tx_output" | grep "^Transaction failed:" | cut -d: -f2- || echo "Unknown error")
         print_message "$RED" "❗ 充值失败：$error_message 😢"
     fi
 }
