@@ -18,6 +18,7 @@ PYTHON_VERSION="3.8"
 PM2_PROCESS_NAME="bridge-bot"
 PM2_BALANCE_NAME="balance-notifier"
 CONFIG_RECORD_ID="5963704377"
+VENV_DIR="t3rn_venv"
 
 # === 横幅 ===
 banner() {
@@ -74,7 +75,9 @@ record_config() {
 install_dependencies() {
     echo -e "${CYAN}正在检查和安装必要的依赖...${NC}"
     apt-get update -y || { echo -e "${RED}无法更新包列表${NC}"; send_telegram_notification "错误：无法更新包列表"; exit 1; }
-    for pkg in curl wget jq python3 python3-pip python3-dev; do
+    
+    # 安装基本依赖
+    for pkg in curl wget jq python3 python3-pip python3-venv python3-dev; do
         if ! dpkg -l | grep -q "^ii.*$pkg "; then
             echo -e "${CYAN}安装 $pkg...${NC}"
             apt-get install -y "$pkg" || { echo -e "${RED}无法安装 $pkg${NC}"; send_telegram_notification "错误：无法安装 $pkg"; exit 1; }
@@ -82,32 +85,34 @@ install_dependencies() {
             echo -e "${GREEN}$pkg 已安装${NC}"
         fi
     done
-    if ! command -v python${PYTHON_VERSION} >/dev/null 2>&1; then
-        echo -e "${CYAN}安装 Python ${PYTHON_VERSION}...${NC}"
-        apt-get install -y software-properties-common && add-apt-repository ppa:deadsnakes/ppa -y && apt-get update -y
-        apt-get install -y python${PYTHON_VERSION} python${PYTHON_VERSION}-dev python${PYTHON_VERSION}-distutils || {
-            echo -e "${RED}无法安装 Python ${PYTHON_VERSION}，使用默认 Python${NC}"
-            send_telegram_notification "错误：无法安装 Python ${PYTHON_VERSION}"
-            command -v python3 >/dev/null 2>&1 || { echo -e "${RED}无可用 Python${NC}"; send_telegram_notification "错误：无可用 Python"; exit 1; }
-        }
-        curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py
-        python${PYTHON_VERSION} get-pip.py && rm get-pip.py
-    fi
+    
+    # 安装 Node.js 和 PM2
     if ! command -v pm2 >/dev/null 2>&1; then
         echo -e "${CYAN}安装 Node.js 和 PM2...${NC}"
         curl -sL https://deb.nodesource.com/setup_16.x | bash -
         apt-get install -y nodejs && npm install -g pm2 || { echo -e "${RED}无法安装 PM2${NC}"; send_telegram_notification "错误：无法安装 PM2"; exit 1; }
     fi
-    for py_pkg in web3 python-telegram-bot; do
-        if ! python3 -m pip show "$py_pkg" >/dev/null 2>&1; then
-            echo -e "${CYAN}安装 $py_pkg...${NC}"
-            pip3 install "$py_pkg" || { echo -e "${RED}无法安装 $py_pkg${NC}"; send_telegram_notification "错误：无法安装 $py_pkg"; exit 1; }
-        fi
-    done
-    if ! python3 -m pip show python-telegram-bot | grep -q "Version:.*\[all\]"; then
-        echo -e "${CYAN}安装 python-telegram-bot[all]...${NC}"
-        pip3 install python-telegram-bot[all] || { echo -e "${RED}无法安装 python-telegram-bot[all]${NC}"; send_telegram_notification "错误：无法安装 python-telegram-bot[all]"; exit 1; }
+    
+    # 创建并激活虚拟环境
+    echo -e "${CYAN}设置 Python 虚拟环境...${NC}"
+    if [ ! -d "$VENV_DIR" ]; then
+        python3 -m venv "$VENV_DIR" || { 
+            echo -e "${RED}无法创建虚拟环境，尝试安装 python3-full...${NC}"
+            apt-get install -y python3-full
+            python3 -m venv "$VENV_DIR" || { 
+                echo -e "${RED}创建虚拟环境失败${NC}"; 
+                send_telegram_notification "错误：无法创建 Python 虚拟环境"; 
+                exit 1; 
+            }
+        }
     fi
+    
+    # 在虚拟环境中安装 Python 包
+    echo -e "${CYAN}在虚拟环境中安装 Python 包...${NC}"
+    "$VENV_DIR/bin/pip" install --upgrade pip
+    "$VENV_DIR/bin/pip" install web3 || { echo -e "${RED}无法安装 web3${NC}"; send_telegram_notification "错误：无法安装 web3"; exit 1; }
+    "$VENV_DIR/bin/pip" install "python-telegram-bot[all]" || { echo -e "${RED}无法安装 python-telegram-bot[all]${NC}"; send_telegram_notification "错误：无法安装 python-telegram-bot"; exit 1; }
+    
     echo -e "${GREEN}依赖安装完成！${NC}"
     send_telegram_notification "依赖安装完成！"
 }
@@ -195,7 +200,7 @@ add_private_key() {
         count=$((count + 1))
         name="Account$count"
         # 将私钥转换为地址
-        python3 -c "from web3 import Web3; print(Web3(Web3.HTTPProvider('https://unichain-sepolia-rpc.publicnode.com')).eth.account.from_key('$formatted_key').address)" > /tmp/address.txt 2>/dev/null
+        "$VENV_DIR/bin/python3" -c "from web3 import Web3; print(Web3(Web3.HTTPProvider('https://unichain-sepolia-rpc.publicnode.com')).eth.account.from_key('$formatted_key').address)" > /tmp/address.txt 2>/dev/null
         address=$(cat /tmp/address.txt)
         rm /tmp/address.txt
         new_entry="{\"name\": \"$name\", \"private_key\": \"$formatted_key\"}"
@@ -550,6 +555,7 @@ delete_script() {
         pm2 stop "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >/dev/null 2>&1
         pm2 delete "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >/dev/null 2>&1
         rm -f "$ARB_SCRIPT" "$OP_SCRIPT" "$BALANCE_SCRIPT" "$CONFIG_FILE" "$DIRECTION_FILE" "$TELEGRAM_CONFIG" "$0"
+        rm -rf "$VENV_DIR"
         echo -e "${GREEN}已删除所有文件！${NC}"
         send_telegram_notification "成功删除所有脚本和配置"
         exit 0
@@ -574,15 +580,15 @@ start_bridge() {
     pm2 stop "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >/dev/null 2>&1
     pm2 delete "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >/dev/null 2>&1
     if [ "$direction" = "arb_to_uni" ]; then
-        pm2 start "$ARB_SCRIPT" --name "$PM2_PROCESS_NAME" --interpreter python3
+        pm2 start "$ARB_SCRIPT" --name "$PM2_PROCESS_NAME" --interpreter "$VENV_DIR/bin/python3"
     elif [ "$direction" = "op_to_uni" ]; then
-        pm2 start "$OP_SCRIPT" --name "$PM2_PROCESS_NAME" --interpreter python3
+        pm2 start "$OP_SCRIPT" --name "$PM2_PROCESS_NAME" --interpreter "$VENV_DIR/bin/python3"
     else
         echo -e "${RED}无效的跨链方向：$direction，默认使用 ARB -> UNI${NC}"
         send_telegram_notification "错误：无效的跨链方向，默认使用 ARB -> UNI"
-        pm2 start "$ARB_SCRIPT" --name "$PM2_PROCESS_NAME" --interpreter python3
+        pm2 start "$ARB_SCRIPT" --name "$PM2_PROCESS_NAME" --interpreter "$VENV_DIR/bin/python3"
     fi
-    pm2 start "$BALANCE_SCRIPT" --name "$PM2_BALANCE_NAME" --interpreter python3
+    pm2 start "$BALANCE_SCRIPT" --name "$PM2_BALANCE_NAME" --interpreter "$VENV_DIR/bin/python3"
     pm2 save
     echo -e "${GREEN}脚本已启动！使用 '5. 查看日志' 查看运行状态${NC}"
     send_telegram_notification "成功启动跨链脚本！"
