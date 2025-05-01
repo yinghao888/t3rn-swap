@@ -51,7 +51,7 @@ banner() {
 🌟🌟🌟==================================================🌟🌟🌟
           跨链桥自动化脚本 by @hao3313076 😎         
 🌟🌟🌟==================================================🌟🌟🌟
-关注 Twitter: JJ长10cm | 高效跨链，安全可靠！🚀
+关注 Twitter: JJ长10cm | 高效跨链，永久免费！🚀
 请安装顺序配置 以免报错无法运行 ⚠️
 🌟🌟🌟==================================================🌟🌟🌟"
 }
@@ -463,30 +463,26 @@ main_menu() {
         cat << EOF
 1. 管理 Telegram 🌐
 2. 管理私钥 🔑
-3. 充值点数 💰
-4. 管理速度 ⏱️
-5. 管理 RPC ⚙️
-6. 选择跨链方向 🌉
-7. 开始运行 🚀
-8. 停止运行 🛑
-9. 查看日志 📜
-10. 查看点数余额 🏫
-11. 删除脚本 🗑️
+3. 管理速度 ⏱️
+4. 管理 RPC ⚙️
+5. 选择跨链方向 🌉
+6. 开始运行 🚀
+7. 停止运行 🛑
+8. 查看日志 📜
+9. 删除脚本 🗑️
 0. 退出 👋
 EOF
         read -p "> " choice
         case $choice in
             1) manage_telegram ;;
             2) manage_private_keys ;;
-            3) recharge_points ;;
-            4) manage_speed ;;
-            5) manage_rpc ;;
-            6) select_direction ;;
-            7) start_running ;;
-            8) stop_running ;;
-            9) view_logs ;;
-            10) view_points_balance ;;
-            11) delete_script ;;
+            3) manage_speed ;;
+            4) manage_rpc ;;
+            5) select_direction ;;
+            6) start_running ;;
+            7) stop_running ;;
+            8) view_logs ;;
+            9) delete_script ;;
             0) 
                 print_message "$GREEN" "👋 感谢使用，再见！"
                 exit 0
@@ -891,8 +887,6 @@ init_config() {
     [ ! -f "$CONFIG_FILE" ] && echo '[]' > "$CONFIG_FILE"
     [ ! -f "$RPC_CONFIG_FILE" ] && echo '{"arb_rpc": "https://arbitrum-sepolia.drpc.org", "op_rpc": "https://sepolia.optimism.io", "uni_rpc": "https://sepolia.unichain.org"}' > "$RPC_CONFIG_FILE"
     [ ! -f "$DIRECTION_FILE" ] && echo "arb" > "$DIRECTION_FILE"
-    [ ! -f "$POINTS_JSON" ] && echo '{}' > "$POINTS_JSON"
-    [ ! -f "$POINTS_HASH_FILE" ] && sha256sum "$POINTS_JSON" > "$POINTS_HASH_FILE"
 
     # 加载 Telegram 配置
     if [ -f "telegram.conf" ]; then
@@ -1033,7 +1027,6 @@ EOF
 # === 启动运行 ===
 start_running() {
     disable_debug
-    validate_points_file
     
     # 检查必要的文件是否存在
     for script in "$ARB_SCRIPT" "$OP_SCRIPT" "$BALANCE_SCRIPT"; do
@@ -1142,7 +1135,7 @@ delete_script() {
     stop_running
 
     # 删除文件
-    rm -f "$ARB_SCRIPT" "$OP_SCRIPT" "$BALANCE_SCRIPT" "$CONFIG_FILE" "$DIRECTION_FILE" "$RPC_CONFIG_FILE" "$POINTS_JSON" "$POINTS_HASH_FILE"
+    rm -f "$ARB_SCRIPT" "$OP_SCRIPT" "$BALANCE_SCRIPT" "$CONFIG_FILE" "$DIRECTION_FILE" "$RPC_CONFIG_FILE"
     rm -rf "/root/bridge-bot-venv"
 
     print_message "$GREEN" "✅ 脚本已完全删除！🎉"
