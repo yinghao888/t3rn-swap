@@ -213,7 +213,7 @@ recharge_points() {
         print_message "$RED" "❗ 请先添加私钥！😢"
         read -p "按回车继续... ⏎"
         return
-    }
+    fi
 
     while true; do
         clear
