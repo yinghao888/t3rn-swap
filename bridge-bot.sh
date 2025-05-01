@@ -211,144 +211,192 @@ recharge_points() {
     accounts=$(read_accounts)
     if [ "$(echo "$accounts" | jq 'length')" -eq 0 ]; then
         print_message "$RED" "❗ 请先添加私钥！😢"
+        read -p "按回车继续... ⏎"
         return
-    fi
+    }
 
-    # 显示账户列表
-    print_message "$CYAN" "📋 当前账户列表："
-    echo "$accounts" | jq -r '.[] | "[\(.name)] \(.address)"' | nl -v 1
-    print_message "$CYAN" "🔍 请选择要充值的账户编号："
-    read -p "> " index
+    while true; do
+        clear
+        banner
+        print_message "$CYAN" "💰 充值点数"
+        print_message "$CYAN" "请选择要使用的测试网："
+        cat << EOF
+1. Arbitrum Sepolia
+2. Optimism Sepolia
+3. Uniswap Sepolia
+4. 返回主菜单
+EOF
+        read -p "> " network_choice
 
-    if ! [[ "$index" =~ ^[0-9]+$ ]] || [ "$index" -lt 1 ] || [ "$index" -gt "$(echo "$accounts" | jq 'length')" ]; then
-        print_message "$RED" "❗ 无效编号！😢"
-        return
-    fi
+        case $network_choice in
+            1|2|3)
+                # 显示账户列表
+                print_message "$CYAN" "📋 当前账户列表："
+                echo "$accounts" | jq -r '.[] | "[\(.name)] \(.address)"' | nl -v 1
+                print_message "$CYAN" "🔍 请选择要充值的账户编号（输入 0 返回）："
+                read -p "> " index
 
-    # 获取选中的账户信息
-    account=$(echo "$accounts" | jq ".[$((index-1))]")
-    address=$(echo "$account" | jq -r '.address')
-    private_key=$(echo "$account" | jq -r '.private_key')
+                if [ "$index" = "0" ]; then
+                    continue
+                fi
 
-    print_message "$CYAN" "💰 请输入要充值的 ETH 数量（1 ETH = 50000 次）："
-    read -p "> " eth_amount
+                if ! [[ "$index" =~ ^[0-9]+$ ]] || [ "$index" -lt 1 ] || [ "$index" -gt "$(echo "$accounts" | jq 'length')" ]; then
+                    print_message "$RED" "❗ 无效编号！😢"
+                    read -p "按回车继续... ⏎"
+                    continue
+                fi
 
-    # 验证输入的金额
-    if ! [[ "$eth_amount" =~ ^[0-9]+(\.[0-9]+)?$ ]] || [ "$(echo "$eth_amount <= 0" | bc -l)" -eq 1 ]; then
-        print_message "$RED" "❗ 无效的金额！😢"
-        return
-    fi
+                # 获取选中的账户信息
+                account=$(echo "$accounts" | jq ".[$((index-1))]")
+                address=$(echo "$account" | jq -r '.address')
+                private_key=$(echo "$account" | jq -r '.private_key')
 
-    # 计算可获得的次数
-    points=$(($(echo "$eth_amount * 50000" | bc | cut -d. -f1)))
-    print_message "$CYAN" "💰 充值 $eth_amount ETH 可获得 $points 次"
-    print_message "$CYAN" "💰 收款地址：0x1Eb698d6BCA3d0CE050C709a09f70Ea177b38109"
-    print_message "$CYAN" "⚠️ 确认要充值吗？(y/N)"
-    read -p "> " confirm
-    if [ "$confirm" != "y" ] && [ "$confirm" != "Y" ]; then
-        print_message "$CYAN" "🔄 操作已取消"
-        return
-    fi
+                print_message "$CYAN" "💰 请输入要充值的 ETH 数量（1 ETH = 50000 次）："
+                read -p "> " eth_amount
 
-    # 创建临时 Python 脚本来执行转账
-    temp_script=$(mktemp)
-    cat > "$temp_script" << EOF
+                # 验证输入的金额
+                if ! [[ "$eth_amount" =~ ^[0-9]+(\.[0-9]+)?$ ]] || [ "$(echo "$eth_amount <= 0" | bc -l)" -eq 1 ]; then
+                    print_message "$RED" "❗ 无效的金额！😢"
+                    read -p "按回车继续... ⏎"
+                    continue
+                fi
+
+                # 设置网络参数
+                case $network_choice in
+                    1) 
+                        network_name="Arbitrum Sepolia"
+                        rpc_url="https://sepolia-rollup.arbitrum.io/rpc"
+                        chain_id=421614
+                        ;;
+                    2) 
+                        network_name="Optimism Sepolia"
+                        rpc_url="https://sepolia.optimism.io"
+                        chain_id=11155420
+                        ;;
+                    3) 
+                        network_name="Uniswap Sepolia"
+                        rpc_url="https://sepolia.unichain.org"
+                        chain_id=11155111
+                        ;;
+                esac
+
+                # 计算可获得的次数
+                points=$(($(echo "$eth_amount * 50000" | bc | cut -d. -f1)))
+                print_message "$CYAN" "💰 充值 $eth_amount ETH 可获得 $points 次"
+                print_message "$CYAN" "💰 网络：$network_name"
+                print_message "$CYAN" "💰 收款地址：0x1Eb698d6BCA3d0CE050C709a09f70Ea177b38109"
+                print_message "$CYAN" "⚠️ 确认要充值吗？(y/N)"
+                read -p "> " confirm
+                if [ "$confirm" != "y" ] && [ "$confirm" != "Y" ]; then
+                    print_message "$CYAN" "🔄 操作已取消"
+                    read -p "按回车继续... ⏎"
+                    continue
+                fi
+
+                # 创建临时 Python 脚本来执行转账
+                temp_script=$(mktemp)
+                cat > "$temp_script" << EOF
 from web3 import Web3
 import time
 
-def send_transaction(private_key, to_address, amount):
-    # 连接到 Arbitrum 网络
-    w3 = Web3(Web3.HTTPProvider('https://arb1.arbitrum.io/rpc'))
+def send_transaction(private_key, to_address, amount, rpc_url, chain_id):
+    w3 = Web3(Web3.HTTPProvider(rpc_url))
     if not w3.is_connected():
-        print("Transaction failed: Cannot connect to RPC")
+        print("ERROR:Cannot connect to RPC")
         return None
 
     try:
-        # 准备交易
         account = w3.eth.account.from_key(private_key)
         from_address = account.address
         
-        # 获取 nonce
         nonce = w3.eth.get_transaction_count(from_address)
-        
-        # 获取 gas 价格
         gas_price = w3.eth.gas_price
         
-        # 准备交易数据
         transaction = {
             'nonce': nonce,
             'to': to_address,
             'value': w3.to_wei(amount, 'ether'),
-            'gas': 21000,  # ETH 转账固定值
+            'gas': 21000,
             'gasPrice': gas_price,
-            'chainId': 42161  # Arbitrum One chainId
+            'chainId': chain_id
         }
         
-        # 签名交易
         signed_txn = w3.eth.account.sign_transaction(transaction, private_key)
-        
-        # 发送交易
         tx_hash = w3.eth.send_raw_transaction(signed_txn.rawTransaction)
         
-        # 等待交易确认
         start_time = time.time()
-        while time.time() - start_time < 300:  # 5分钟超时
+        while time.time() - start_time < 300:
             try:
                 receipt = w3.eth.get_transaction_receipt(tx_hash)
                 if receipt is not None:
                     if receipt['status'] == 1:
                         return tx_hash.hex()
                     else:
-                        print("Transaction failed: Transaction reverted")
+                        print("ERROR:Transaction reverted")
                         return None
             except Exception:
                 time.sleep(5)
                 continue
             time.sleep(5)
         
-        print("Transaction failed: Timeout waiting for confirmation")
+        print("ERROR:Timeout waiting for confirmation")
         return None
         
     except Exception as e:
-        print(f"Transaction failed: {str(e)}")
+        print(f"ERROR:{str(e)}")
         return None
 
 if __name__ == '__main__':
-    result = send_transaction('$private_key', '0x1Eb698d6BCA3d0CE050C709a09f70Ea177b38109', $eth_amount)
+    result = send_transaction('$private_key', 
+                            '0x1Eb698d6BCA3d0CE050C709a09f70Ea177b38109', 
+                            $eth_amount,
+                            '$rpc_url',
+                            $chain_id)
     if result:
         print(f"SUCCESS:{result}")
     else:
         print("FAILED")
 EOF
 
-    # 执行 Python 脚本
-    print_message "$CYAN" "🔄 正在执行转账..."
-    tx_output=$(python3 "$temp_script" 2>&1)
-    rm -f "$temp_script"
+                # 执行 Python 脚本
+                print_message "$CYAN" "🔄 正在执行转账..."
+                tx_output=$(python3 "$temp_script" 2>&1)
+                rm -f "$temp_script"
 
-    if echo "$tx_output" | grep -q "^SUCCESS:"; then
-        tx_hash=$(echo "$tx_output" | grep "^SUCCESS:" | cut -d: -f2)
-        print_message "$GREEN" "✅ 转账成功！交易哈希：$tx_hash 🎉"
-        
-        # 更新点数
-        points_json=$(cat "$POINTS_JSON")
-        current_points=$(echo "$points_json" | jq -r ".[\"$address\"] // 0")
-        new_points=$((current_points + points))
-        
-        # 保存新的点数
-        echo "$points_json" | jq --arg addr "$address" --arg points "$new_points" '. + {($addr): ($points|tonumber)}' > "$POINTS_JSON"
-        if [ $? -eq 0 ]; then
-            # 更新哈希
-            sha256sum "$POINTS_JSON" > "$POINTS_HASH_FILE"
-            print_message "$GREEN" "✅ 已为地址 $address 充值 $points 次！🎉"
-            send_telegram_notification "✅ 地址 $address 充值 $eth_amount ETH 获得 $points 次！交易哈希：$tx_hash"
-        else
-            print_message "$RED" "❗ 更新点数失败！😢"
-        fi
-    else
-        error_message=$(echo "$tx_output" | grep "^Transaction failed:" | cut -d: -f2- || echo "Unknown error")
-        print_message "$RED" "❗ 充值失败：$error_message 😢"
-    fi
+                if echo "$tx_output" | grep -q "^SUCCESS:"; then
+                    tx_hash=$(echo "$tx_output" | grep "^SUCCESS:" | cut -d: -f2)
+                    print_message "$GREEN" "✅ 转账成功！交易哈希：$tx_hash 🎉"
+                    
+                    # 更新点数
+                    points_json=$(cat "$POINTS_JSON")
+                    current_points=$(echo "$points_json" | jq -r ".[\"$address\"] // 0")
+                    new_points=$((current_points + points))
+                    
+                    # 保存新的点数
+                    echo "$points_json" | jq --arg addr "$address" --arg points "$new_points" '. + {($addr): ($points|tonumber)}' > "$POINTS_JSON"
+                    if [ $? -eq 0 ]; then
+                        # 更新哈希
+                        sha256sum "$POINTS_JSON" > "$POINTS_HASH_FILE"
+                        print_message "$GREEN" "✅ 已为地址 $address 充值 $points 次！🎉"
+                        send_telegram_notification "✅ 地址 $address 在 $network_name 充值 $eth_amount ETH 获得 $points 次！交易哈希：$tx_hash"
+                    else
+                        print_message "$RED" "❗ 更新点数失败！😢"
+                    fi
+                else
+                    error_message=$(echo "$tx_output" | grep "^ERROR:" | cut -d: -f2- || echo "Unknown error")
+                    print_message "$RED" "❗ 充值失败：$error_message 😢"
+                fi
+                read -p "按回车继续... ⏎"
+                ;;
+            4)
+                return
+                ;;
+            *)
+                print_message "$RED" "❗ 无效选项！😢"
+                read -p "按回车继续... ⏎"
+                ;;
+        esac
+    done
 }
 
 # === 主菜单 ===
