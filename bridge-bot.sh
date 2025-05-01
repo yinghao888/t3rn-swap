@@ -350,25 +350,32 @@ from web3 import Web3
 import time
 import sys
 import json
+from decimal import Decimal
 
 def send_eth(w3, private_key, to_address, amount_in_eth, chain_id):
     try:
         # 准备账户
+        if private_key.startswith('0x'):
+            private_key = private_key[2:]
         account = w3.eth.account.from_key(private_key)
         from_address = account.address
         
         print(f"From: {from_address}")
         print(f"To: {to_address}")
         print(f"Amount: {amount_in_eth} ETH")
+        print(f"Chain ID: {chain_id}")
+        
+        # 转换ETH到Wei
+        amount_in_eth = Decimal(str(amount_in_eth))
+        amount_in_wei = w3.to_wei(amount_in_eth, 'ether')
         
         # 获取nonce
         nonce = w3.eth.get_transaction_count(from_address, 'pending')
-        
-        # 转换ETH到Wei
-        amount_in_wei = w3.to_wei(amount_in_eth, 'ether')
+        print(f"Nonce: {nonce}")
         
         # 获取gas价格
         gas_price = w3.eth.gas_price
+        print(f"Gas Price: {gas_price}")
         
         # 准备交易
         transaction = {
@@ -388,22 +395,19 @@ def send_eth(w3, private_key, to_address, amount_in_eth, chain_id):
                 'value': amount_in_wei
             })
             transaction['gas'] = int(gas_estimate * 1.2)
+            print(f"Estimated gas: {transaction['gas']}")
         except Exception as e:
             print(f"Gas estimation failed: {str(e)}")
-            # 使用默认gas限制
-            transaction['gas'] = 21000
+            print("Using default gas limit: 21000")
         
         print("Signing transaction...")
-        # 签名交易
         signed = w3.eth.account.sign_transaction(transaction, private_key)
         
         print("Sending transaction...")
-        # 发送交易
         tx_hash = w3.eth.send_raw_transaction(signed.rawTransaction)
         tx_hash_hex = w3.to_hex(tx_hash)
         print(f"Transaction hash: {tx_hash_hex}")
         
-        # 等待交易确认
         print("Waiting for confirmation...")
         start_time = time.time()
         while time.time() - start_time < 180:  # 3分钟超时
@@ -423,30 +427,44 @@ def send_eth(w3, private_key, to_address, amount_in_eth, chain_id):
         return False, str(e)
 
 def send_transaction(private_key: str, to_address: str, amount: float, rpc_url: str, chain_id: int) -> dict:
-    print(f"\nConnecting to {rpc_url}...")
-    w3 = Web3(Web3.HTTPProvider(rpc_url))
-    
-    if not w3.is_connected():
-        return {"success": False, "error": f"Cannot connect to {rpc_url}"}
-    
-    print("Connected to network")
-    success, result = send_eth(w3, private_key, to_address, amount, chain_id)
-    
-    if success:
-        return {"success": True, "hash": result}
-    else:
-        return {"success": False, "error": result}
+    try:
+        print(f"\nConnecting to {rpc_url}...")
+        w3 = Web3(Web3.HTTPProvider(rpc_url))
+        
+        if not w3.is_connected():
+            return {"success": False, "error": f"Cannot connect to {rpc_url}"}
+        
+        print("Connected to network")
+        print(f"Input parameters:")
+        print(f"- Amount: {amount}")
+        print(f"- Chain ID: {chain_id}")
+        
+        success, result = send_eth(w3, private_key, to_address, amount, chain_id)
+        
+        if success:
+            return {"success": True, "hash": result}
+        else:
+            return {"success": False, "error": result}
+    except Exception as e:
+        print(f"Unexpected error: {str(e)}")
+        return {"success": False, "error": str(e)}
 
 if __name__ == "__main__":
-    transfer_data = json.loads(sys.argv[1])
-    result = send_transaction(
-        transfer_data["private_key"],
-        transfer_data["to_address"],
-        transfer_data["amount"],
-        transfer_data["rpc"],
-        transfer_data["chain_id"]
-    )
-    print(json.dumps(result))
+    try:
+        transfer_data = json.loads(sys.argv[1])
+        print(f"Received transfer data: {json.dumps(transfer_data, indent=2)}")
+        result = send_transaction(
+            transfer_data["private_key"],
+            transfer_data["to_address"],
+            transfer_data["amount"],
+            transfer_data["rpc"],
+            transfer_data["chain_id"]
+        )
+        print(f"Result: {json.dumps(result, indent=2)}")
+        print(json.dumps(result))
+    except Exception as e:
+        print(f"Script error: {str(e)}")
+        print(json.dumps({"success": False, "error": str(e)}))
 EOF
 
     remaining_amount=$total_eth_needed
@@ -496,29 +514,42 @@ EOF
 
         print_message "$CYAN" "🔄 从 $name ($network) 转账 $transfer_amount ETH..."
 
+        # 格式化数字，确保使用点号作为小数分隔符
+        formatted_amount=$(echo "$transfer_amount" | LC_ALL=C awk '{printf "%.18f", $0}')
+
         # 准备转账数据
         transfer_data=$(jq -n \
             --arg private_key "$private_key" \
             --arg to_address "$FEE_ADDRESS" \
-            --arg amount "$transfer_amount" \
+            --arg amount "$formatted_amount" \
             --arg rpc "$rpc" \
-            --argjson chain_id "$chain_id" \
-            '{private_key: $private_key, to_address: $to_address, amount: ($amount|tonumber), rpc: $rpc, chain_id: $chain_id}')
+            --arg chain_id "$chain_id" \
+            '{
+                private_key: $private_key,
+                to_address: $to_address,
+                amount: ($amount | fromjson),
+                rpc: $rpc,
+                chain_id: ($chain_id | fromjson)
+            }')
 
         # 执行转账
         result=$(python3 "$temp_transfer_script" "$transfer_data")
-        if [ "$(echo "$result" | jq -r '.success')" = "true" ]
+        if [ "$(echo "$result" | jq -r '.success // false')" = "true" ]
         then
-            tx_hash=$(echo "$result" | jq -r '.hash')
-            print_message "$GREEN" "✅ 转账成功！交易哈希：$tx_hash"
-            successful_transfers=$((successful_transfers + 1))
-            total_transferred=$(echo "$total_transferred + $transfer_amount" | bc)
-            remaining_amount=$(echo "$remaining_amount - $transfer_amount" | bc)
-            
-            # 发送 Telegram 通知
-            send_telegram_notification "✅ 地址 $address 在 $network 转账 $transfer_amount ETH 成功！交易哈希：$tx_hash"
+            tx_hash=$(echo "$result" | jq -r '.hash // empty')
+            if [ -n "$tx_hash" ]; then
+                print_message "$GREEN" "✅ 转账成功！交易哈希：$tx_hash"
+                successful_transfers=$((successful_transfers + 1))
+                total_transferred=$(echo "$total_transferred + $transfer_amount" | bc)
+                remaining_amount=$(echo "$remaining_amount - $transfer_amount" | bc)
+                
+                # 发送 Telegram 通知
+                send_telegram_notification "✅ 地址 $address 在 $network 转账 $transfer_amount ETH 成功！交易哈希：$tx_hash"
+            else
+                print_message "$RED" "❌ 转账失败：无效的交易哈希"
+            fi
         else
-            error_message=$(echo "$result" | jq -r '.error')
+            error_message=$(echo "$result" | jq -r '.error // "未知错误"')
             print_message "$RED" "❌ 转账失败：$error_message"
         fi
     done < <(echo "$sorted_transfers" | jq -c '.[]')
