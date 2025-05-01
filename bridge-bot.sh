@@ -90,6 +90,62 @@ download_python_scripts() {
     done
 }
 
+# === 获取账户余额 ===
+get_account_balance() {
+    local address="$1"
+    local chain="$2"
+    local balance_wei=0
+    case "$chain" in
+        "OP")
+            rpc_urls=$(jq -r '.OP_RPC_URLS[]' "$RPC_CONFIG_FILE")
+            ;;
+        "ARB")
+            rpc_urls=$(jq -r '.ARB_RPC_URLS[]' "$RPC_CONFIG_FILE")
+            ;;
+        "UNI")
+            rpc_urls=$(jq -r '.UNI_RPC_URLS[]' "$RPC_CONFIG_FILE")
+            ;;
+        *)
+            echo "0"
+            return 1
+            ;;
+    esac
+    for url in $rpc_urls; do
+        balance_wei=$(python3 -c "from web3 import Web3; w3 = Web3(Web3.HTTPProvider('$url')); print(w3.eth.get_balance('$address'))" 2>/dev/null)
+        if [ -n "$balance_wei" ]; then
+            break
+        fi
+    done
+    if [ -z "$balance_wei" ]; then
+        echo "0"
+        return 1
+    fi
+    balance_eth=$(python3 -c "print('{:.6f}'.format($balance_wei / 10**18))" 2>/dev/null)
+    echo "$balance_eth"
+}
+
+# === 验证点数文件完整性 ===
+validate_points_file() {
+    if [ ! -f "$POINTS_JSON" ] || [ ! -f "$POINTS_HASH_FILE" ]; then
+        echo -e "${RED}❗ 点数文件或哈希文件缺失！尝试重新创建...😢${NC}" >&2
+        echo '{}' > "$POINTS_JSON"
+        sha256sum "$POINTS_JSON" > "$POINTS_HASH_FILE" 2>/dev/null || {
+            echo -e "${RED}❗ 无法创建 $POINTS_HASH_FILE，请检查写入权限😢${NC}" >&2
+            return 0
+        }
+        echo -e "${GREEN}✅ 点数文件已重新创建🎉${NC}"
+        return 0
+    fi
+    current_hash=$(sha256sum "$POINTS_JSON" | awk '{print $1}')
+    stored_hash=$(awk '{print $1}' "$POINTS_HASH_FILE")
+    if [ "$current_hash" != "$stored_hash" ]; then
+        echo -e "${RED}❗ 点数文件被篡改！😢${NC}" >&2
+        send_telegram_notification "点数文件被篡改！"
+        return 0
+    fi
+    return 0
+}
+
 # === 初始化配置文件 ===
 init_config() {
     [ ! -f "$CONFIG_FILE" ] && echo '[]' > "$CONFIG_FILE" && echo -e "${GREEN}✅ 创建 $CONFIG_FILE 🎉${NC}"
