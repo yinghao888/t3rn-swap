@@ -9,6 +9,19 @@ NC='\033[0m' # No Color
 # === 脚本路径和配置 ===
 ARB_SCRIPT="uni-arb.py"
 OP_SCRIPT="op-uni.py"
+ARB_OP_SCRIPT="arb-op.py"
+BASE_OP_SCRIPT="base-op.py"
+# 添加单向跨链脚本变量
+UNI_TO_ARB_SCRIPT="uni-to-arb.py"
+UNI_TO_OP_SCRIPT="uni-to-op.py" 
+UNI_TO_BASE_SCRIPT="uni-to-base.py"
+ARB_TO_UNI_SCRIPT="arb-to-uni.py"
+ARB_TO_BASE_SCRIPT="arb-to-base.py"
+OP_TO_UNI_SCRIPT="op-to-uni.py"
+OP_TO_ARB_SCRIPT="op-to-arb.py"
+OP_TO_BASE_SCRIPT="op-to-base.py"
+BASE_TO_UNI_SCRIPT="base-to-uni.py"
+BASE_TO_ARB_SCRIPT="base-to-arb.py"
 BALANCE_SCRIPT="balance-notifier.py"
 BOT_TOKEN="8070858648:AAGfrK1u0IaiXjr4f8TRbUDD92uBGTXdt38"
 CONFIG_FILE="accounts.json"
@@ -31,6 +44,16 @@ banner() {
     echo "            请安装顺序配置 以免报错无法运行"
     echo "              关注TG用户ID@getmyid_bot              "
     echo "             关注@t3rntz_bot获取实时通知             "
+    echo "--------------------------------------------------"
+    echo "     支持网络：Arbitrum Sepolia, Optimism Sepolia    "
+    echo "              Base Sepolia, Unichain Sepolia       "
+    echo "--------------------------------------------------"
+    echo "     双向跨链：ARB <-> UNI, OP <-> UNI, ARB <-> OP   "
+    echo "               BASE <-> OP                         "
+    echo "     单向跨链：UNI -> ARB, UNI -> OP, UNI -> BASE    "
+    echo "               ARB -> UNI, ARB -> BASE, OP -> UNI  "
+    echo "               OP -> ARB, OP -> BASE, BASE -> UNI  "
+    echo "               BASE -> ARB                         "
     echo "=================================================="
     echo -e "${NC}"
 }
@@ -120,16 +143,45 @@ install_dependencies() {
 # === 下载 Python 脚本 ===
 download_python_scripts() {
     echo -e "${CYAN}下载 Python 脚本...${NC}"
-    for script in "$ARB_SCRIPT" "$OP_SCRIPT" "$BALANCE_SCRIPT"; do
+    for script in "$ARB_SCRIPT" "$OP_SCRIPT" "$ARB_OP_SCRIPT" "$BASE_OP_SCRIPT" \
+                 "$UNI_TO_ARB_SCRIPT" "$UNI_TO_OP_SCRIPT" "$UNI_TO_BASE_SCRIPT" \
+                 "$ARB_TO_UNI_SCRIPT" "$ARB_TO_BASE_SCRIPT" \
+                 "$OP_TO_UNI_SCRIPT" "$OP_TO_ARB_SCRIPT" "$OP_TO_BASE_SCRIPT" \
+                 "$BASE_TO_UNI_SCRIPT" "$BASE_TO_ARB_SCRIPT" \
+                 "$BALANCE_SCRIPT"; do
         if [ ! -f "$script" ]; then
-            wget -O "$script" "https://raw.githubusercontent.com/yinghao888/t3rn-swap/main/$script" || { echo -e "${RED}无法下载 $script${NC}"; send_telegram_notification "错误：无法下载 $script"; exit 1; }
+            echo -e "${CYAN}下载 $script...${NC}"
+            wget -O "$script" "https://raw.githubusercontent.com/yinghao888/t3rn-swap/main/$script" || { 
+                echo -e "${RED}无法下载 $script${NC}"
+                send_telegram_notification "错误：无法下载 $script"
+                exit 1
+            }
             chmod +x "$script"
             echo -e "${GREEN}$script 下载完成${NC}"
         else
-            echo -e "${GREEN}$script 已存在，跳过下载${NC}"
+            echo -e "${GREEN}$script 已存在，检查更新...${NC}"
+            # 获取当前文件的SHA-1哈希值
+            local_hash=$(sha1sum "$script" | cut -d' ' -f1)
+            # 获取远程文件的SHA-1哈希值
+            remote_hash=$(wget -q -O- "https://raw.githubusercontent.com/yinghao888/t3rn-swap/main/$script" | sha1sum | cut -d' ' -f1)
+            if [ "$local_hash" != "$remote_hash" ]; then
+                echo -e "${CYAN}发现新版本，更新 $script...${NC}"
+                mv "$script" "${script}.bak"
+                wget -O "$script" "https://raw.githubusercontent.com/yinghao888/t3rn-swap/main/$script" || {
+                    echo -e "${RED}更新 $script 失败，恢复备份${NC}"
+                    mv "${script}.bak" "$script"
+                    send_telegram_notification "警告：更新 $script 失败，使用旧版本"
+                    continue
+                }
+                chmod +x "$script"
+                rm "${script}.bak"
+                echo -e "${GREEN}$script 更新完成${NC}"
+            else
+                echo -e "${GREEN}$script 已是最新版本${NC}"
+            fi
         fi
     done
-    send_telegram_notification "Python 脚本下载完成！"
+    send_telegram_notification "Python 脚本下载/更新完成！"
 }
 
 # === 初始化配置文件 ===
@@ -464,7 +516,11 @@ update_python_accounts() {
         accounts_str="[]"
     fi
     # 检查文件是否存在且可写
-    for script in "$ARB_SCRIPT" "$OP_SCRIPT"; do
+    for script in "$ARB_SCRIPT" "$OP_SCRIPT" "$ARB_OP_SCRIPT" "$BASE_OP_SCRIPT" \
+                 "$UNI_TO_ARB_SCRIPT" "$UNI_TO_OP_SCRIPT" "$UNI_TO_BASE_SCRIPT" \
+                 "$ARB_TO_UNI_SCRIPT" "$ARB_TO_BASE_SCRIPT" \
+                 "$OP_TO_UNI_SCRIPT" "$OP_TO_ARB_SCRIPT" "$OP_TO_BASE_SCRIPT" \
+                 "$BASE_TO_UNI_SCRIPT" "$BASE_TO_ARB_SCRIPT"; do
         if [ ! -f "$script" ]; then
             echo -e "${RED}错误：$script 不存在${NC}"
             send_telegram_notification "错误：$script 不存在"
@@ -477,7 +533,11 @@ update_python_accounts() {
         fi
     done
     # 使用临时文件写入 ACCOUNTS
-    for script in "$ARB_SCRIPT" "$OP_SCRIPT"; do
+    for script in "$ARB_SCRIPT" "$OP_SCRIPT" "$ARB_OP_SCRIPT" "$BASE_OP_SCRIPT" \
+                 "$UNI_TO_ARB_SCRIPT" "$UNI_TO_OP_SCRIPT" "$UNI_TO_BASE_SCRIPT" \
+                 "$ARB_TO_UNI_SCRIPT" "$ARB_TO_BASE_SCRIPT" \
+                 "$OP_TO_UNI_SCRIPT" "$OP_TO_ARB_SCRIPT" "$OP_TO_BASE_SCRIPT" \
+                 "$BASE_TO_UNI_SCRIPT" "$BASE_TO_ARB_SCRIPT"; do
         temp_file=$(mktemp)
         sed "/^ACCOUNTS = \[.*\]/c\ACCOUNTS = $accounts_str" "$script" > "$temp_file"
         if [ $? -ne 0 ]; then
@@ -489,7 +549,11 @@ update_python_accounts() {
         mv "$temp_file" "$script"
     done
     # 验证写入是否成功
-    for script in "$ARB_SCRIPT" "$OP_SCRIPT"; do
+    for script in "$ARB_SCRIPT" "$OP_SCRIPT" "$ARB_OP_SCRIPT" "$BASE_OP_SCRIPT" \
+                 "$UNI_TO_ARB_SCRIPT" "$UNI_TO_OP_SCRIPT" "$UNI_TO_BASE_SCRIPT" \
+                 "$ARB_TO_UNI_SCRIPT" "$ARB_TO_BASE_SCRIPT" \
+                 "$OP_TO_UNI_SCRIPT" "$OP_TO_ARB_SCRIPT" "$OP_TO_BASE_SCRIPT" \
+                 "$BASE_TO_UNI_SCRIPT" "$BASE_TO_ARB_SCRIPT"; do
         current_accounts=$(grep "^ACCOUNTS =" "$script" | sed 's/ACCOUNTS = //')
         if [ "$current_accounts" != "$accounts_str" ]; then
             echo -e "${RED}错误：验证 $script 更新失败${NC}"
@@ -497,35 +561,140 @@ update_python_accounts() {
             return
         fi
     done
-    echo -e "${GREEN}已更新 $ARB_SCRIPT 和 $OP_SCRIPT${NC}"
+    echo -e "${GREEN}已更新所有 Python 脚本${NC}"
     echo -e "${CYAN}当前 $ARB_SCRIPT ACCOUNTS 内容：${NC}"
     grep "^ACCOUNTS =" "$ARB_SCRIPT"
-    echo -e "${CYAN}当前 $OP_SCRIPT ACCOUNTS 内容：${NC}"
-    grep "^ACCOUNTS =" "$OP_SCRIPT"
     send_telegram_notification "成功更新 Python 脚本账户"
 }
 
 # === 配置跨链方向 ===
 select_direction() {
     echo -e "${CYAN}请选择跨链方向：${NC}"
-    echo "1. ARB -> UNI"
-    echo "2. OP <-> UNI"
+    echo "1. ARB <-> UNI (Arbitrum Sepolia 与 Unichain Sepolia 互转)"
+    echo "2. OP <-> UNI (Optimism Sepolia 与 Unichain Sepolia 互转)"
+    echo "3. ARB <-> OP (Arbitrum Sepolia 与 Optimism Sepolia 互转)"
+    echo "4. BASE <-> OP (Base Sepolia 与 Optimism Sepolia 互转)"
+    echo "5. UNI -> ARB (仅从 Unichain Sepolia 单向转至 Arbitrum Sepolia)"
+    echo "6. UNI -> OP (仅从 Unichain Sepolia 单向转至 Optimism Sepolia)"
+    echo "7. UNI -> BASE (仅从 Unichain Sepolia 单向转至 Base Sepolia)"
+    echo "8. ARB -> UNI (仅从 Arbitrum Sepolia 单向转至 Unichain Sepolia)"
+    echo "9. ARB -> BASE (仅从 Arbitrum Sepolia 单向转至 Base Sepolia)"
+    echo "10. OP -> UNI (仅从 Optimism Sepolia 单向转至 Unichain Sepolia)"
+    echo "11. OP -> ARB (仅从 Optimism Sepolia 单向转至 Arbitrum Sepolia)"
+    echo "12. OP -> BASE (仅从 Optimism Sepolia 单向转至 Base Sepolia)"
+    echo "13. BASE -> UNI (仅从 Base Sepolia 单向转至 Unichain Sepolia)"
+    echo "14. BASE -> ARB (仅从 Base Sepolia 单向转至 Arbitrum Sepolia)"
     read -p "> " choice
     case $choice in
         1)
             echo "arb_to_uni" > "$DIRECTION_FILE"
-            echo -e "${GREEN}设置为 ARB -> UNI${NC}"
-            send_telegram_notification "成功配置跨链方向：ARB -> UNI"
+            echo -e "${GREEN}设置为 ARB <-> UNI${NC}"
+            echo -e "${CYAN}跨链合约：${NC}"
+            echo -e "${CYAN}ARB -> UNI: ${GREEN}0x22B65d0B9b59af4D3Ed59F18b9Ad53f5F4908B54${NC}"
+            echo -e "${CYAN}UNI -> ARB: ${GREEN}0x1cEAb5967E5f078Fa0FEC3DFfD0394Af1fEeBCC9${NC}"
+            send_telegram_notification "成功配置跨链方向：ARB <-> UNI"
             ;;
         2)
             echo "op_to_uni" > "$DIRECTION_FILE"
             echo -e "${GREEN}设置为 OP <-> UNI${NC}"
+            echo -e "${CYAN}跨链合约：${NC}"
+            echo -e "${CYAN}OP -> UNI: ${GREEN}0xb6Def636914Ae60173d9007E732684a9eEDEF26E${NC}"
+            echo -e "${CYAN}UNI -> OP: ${GREEN}0x1cEAb5967E5f078Fa0FEC3DFfD0394Af1fEeBCC9${NC}"
             send_telegram_notification "成功配置跨链方向：OP <-> UNI"
             ;;
-        *)
-            echo -e "${RED}无效选项，默认 ARB -> UNI${NC}"
+        3)
+            echo "arb_op" > "$DIRECTION_FILE"
+            echo -e "${GREEN}设置为 ARB <-> OP${NC}"
+            echo -e "${CYAN}跨链合约：${NC}"
+            echo -e "${CYAN}ARB -> OP: ${GREEN}0x22B65d0B9b59af4D3Ed59F18b9Ad53f5F4908B54${NC}"
+            echo -e "${CYAN}OP -> ARB: ${GREEN}0xb6Def636914Ae60173d9007E732684a9eEDEF26E${NC}"
+            send_telegram_notification "成功配置跨链方向：ARB <-> OP"
+            ;;
+        4)
+            echo "base_op" > "$DIRECTION_FILE"
+            echo -e "${GREEN}设置为 BASE <-> OP${NC}"
+            echo -e "${CYAN}跨链合约：${NC}"
+            echo -e "${CYAN}BASE -> OP: ${GREEN}0xCEE0372632a37Ba4d0499D1E2116eCff3A17d3C3${NC}"
+            echo -e "${CYAN}OP -> BASE: ${GREEN}0xb6Def636914Ae60173d9007E732684a9eEDEF26E${NC}"
+            send_telegram_notification "成功配置跨链方向：BASE <-> OP"
+            ;;
+        5)
+            echo "uni_to_arb" > "$DIRECTION_FILE"
+            echo -e "${GREEN}设置为 UNI -> ARB 单向跨链${NC}"
+            echo -e "${CYAN}跨链合约：${NC}"
+            echo -e "${CYAN}UNI -> ARB: ${GREEN}0x1cEAb5967E5f078Fa0FEC3DFfD0394Af1fEeBCC9${NC}"
+            send_telegram_notification "成功配置跨链方向：UNI -> ARB 单向跨链"
+            ;;
+        6)
+            echo "uni_to_op" > "$DIRECTION_FILE"
+            echo -e "${GREEN}设置为 UNI -> OP 单向跨链${NC}"
+            echo -e "${CYAN}跨链合约：${NC}"
+            echo -e "${CYAN}UNI -> OP: ${GREEN}0x1cEAb5967E5f078Fa0FEC3DFfD0394Af1fEeBCC9${NC}"
+            send_telegram_notification "成功配置跨链方向：UNI -> OP 单向跨链"
+            ;;
+        7)
+            echo "uni_to_base" > "$DIRECTION_FILE"
+            echo -e "${GREEN}设置为 UNI -> BASE 单向跨链${NC}"
+            echo -e "${CYAN}跨链合约：${NC}"
+            echo -e "${CYAN}UNI -> BASE: ${GREEN}0x1cEAb5967E5f078Fa0FEC3DFfD0394Af1fEeBCC9${NC}"
+            send_telegram_notification "成功配置跨链方向：UNI -> BASE 单向跨链"
+            ;;
+        8)
             echo "arb_to_uni" > "$DIRECTION_FILE"
-            send_telegram_notification "警告：无效跨链方向，默认 ARB -> UNI"
+            echo -e "${GREEN}设置为 ARB -> UNI 单向跨链${NC}"
+            echo -e "${CYAN}跨链合约：${NC}"
+            echo -e "${CYAN}ARB -> UNI: ${GREEN}0x22B65d0B9b59af4D3Ed59F18b9Ad53f5F4908B54${NC}"
+            send_telegram_notification "成功配置跨链方向：ARB -> UNI 单向跨链"
+            ;;
+        9)
+            echo "arb_to_base" > "$DIRECTION_FILE"
+            echo -e "${GREEN}设置为 ARB -> BASE 单向跨链${NC}"
+            echo -e "${CYAN}跨链合约：${NC}"
+            echo -e "${CYAN}ARB -> BASE: ${GREEN}0x22B65d0B9b59af4D3Ed59F18b9Ad53f5F4908B54${NC}"
+            send_telegram_notification "成功配置跨链方向：ARB -> BASE 单向跨链"
+            ;;
+        10)
+            echo "op_to_uni" > "$DIRECTION_FILE"
+            echo -e "${GREEN}设置为 OP -> UNI 单向跨链${NC}"
+            echo -e "${CYAN}跨链合约：${NC}"
+            echo -e "${CYAN}OP -> UNI: ${GREEN}0xb6Def636914Ae60173d9007E732684a9eEDEF26E${NC}"
+            send_telegram_notification "成功配置跨链方向：OP -> UNI 单向跨链"
+            ;;
+        11)
+            echo "op_to_arb" > "$DIRECTION_FILE"
+            echo -e "${GREEN}设置为 OP -> ARB 单向跨链${NC}"
+            echo -e "${CYAN}跨链合约：${NC}"
+            echo -e "${CYAN}OP -> ARB: ${GREEN}0xb6Def636914Ae60173d9007E732684a9eEDEF26E${NC}"
+            send_telegram_notification "成功配置跨链方向：OP -> ARB 单向跨链"
+            ;;
+        12)
+            echo "op_to_base" > "$DIRECTION_FILE"
+            echo -e "${GREEN}设置为 OP -> BASE 单向跨链${NC}"
+            echo -e "${CYAN}跨链合约：${NC}"
+            echo -e "${CYAN}OP -> BASE: ${GREEN}0xb6Def636914Ae60173d9007E732684a9eEDEF26E${NC}"
+            send_telegram_notification "成功配置跨链方向：OP -> BASE 单向跨链"
+            ;;
+        13)
+            echo "base_to_uni" > "$DIRECTION_FILE"
+            echo -e "${GREEN}设置为 BASE -> UNI 单向跨链${NC}"
+            echo -e "${CYAN}跨链合约：${NC}"
+            echo -e "${CYAN}BASE -> UNI: ${GREEN}0xCEE0372632a37Ba4d0499D1E2116eCff3A17d3C3${NC}"
+            send_telegram_notification "成功配置跨链方向：BASE -> UNI 单向跨链"
+            ;;
+        14)
+            echo "base_to_arb" > "$DIRECTION_FILE"
+            echo -e "${GREEN}设置为 BASE -> ARB 单向跨链${NC}"
+            echo -e "${CYAN}跨链合约：${NC}"
+            echo -e "${CYAN}BASE -> ARB: ${GREEN}0xCEE0372632a37Ba4d0499D1E2116eCff3A17d3C3${NC}"
+            send_telegram_notification "成功配置跨链方向：BASE -> ARB 单向跨链"
+            ;;
+        *)
+            echo -e "${RED}无效选项，默认 ARB <-> UNI${NC}"
+            echo "arb_to_uni" > "$DIRECTION_FILE"
+            echo -e "${CYAN}跨链合约：${NC}"
+            echo -e "${CYAN}ARB -> UNI: ${GREEN}0x22B65d0B9b59af4D3Ed59F18b9Ad53f5F4908B54${NC}"
+            echo -e "${CYAN}UNI -> ARB: ${GREEN}0x1cEAb5967E5f078Fa0FEC3DFfD0394Af1fEeBCC9${NC}"
+            send_telegram_notification "警告：无效跨链方向，默认 ARB <-> UNI"
             ;;
     esac
 }
@@ -554,7 +723,12 @@ delete_script() {
     if [ "$confirm" = "y" ] || [ "$confirm" = "Y" ]; then
         pm2 stop "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >/dev/null 2>&1
         pm2 delete "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >/dev/null 2>&1
-        rm -f "$ARB_SCRIPT" "$OP_SCRIPT" "$BALANCE_SCRIPT" "$CONFIG_FILE" "$DIRECTION_FILE" "$TELEGRAM_CONFIG" "$0"
+        rm -f "$ARB_SCRIPT" "$OP_SCRIPT" "$ARB_OP_SCRIPT" "$BASE_OP_SCRIPT" \
+              "$UNI_TO_ARB_SCRIPT" "$UNI_TO_OP_SCRIPT" "$UNI_TO_BASE_SCRIPT" \
+              "$ARB_TO_UNI_SCRIPT" "$ARB_TO_BASE_SCRIPT" \
+              "$OP_TO_UNI_SCRIPT" "$OP_TO_ARB_SCRIPT" "$OP_TO_BASE_SCRIPT" \
+              "$BASE_TO_UNI_SCRIPT" "$BASE_TO_ARB_SCRIPT" \
+              "$BALANCE_SCRIPT" "$CONFIG_FILE" "$DIRECTION_FILE" "$TELEGRAM_CONFIG" "$0"
         rm -rf "$VENV_DIR"
         echo -e "${GREEN}已删除所有文件！${NC}"
         send_telegram_notification "成功删除所有脚本和配置"
@@ -579,19 +753,85 @@ start_bridge() {
     direction=$(cat "$DIRECTION_FILE")
     pm2 stop "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >/dev/null 2>&1
     pm2 delete "$PM2_PROCESS_NAME" "$PM2_BALANCE_NAME" >/dev/null 2>&1
-    if [ "$direction" = "arb_to_uni" ]; then
-        pm2 start "$ARB_SCRIPT" --name "$PM2_PROCESS_NAME" --interpreter "$VENV_DIR/bin/python3"
-    elif [ "$direction" = "op_to_uni" ]; then
-        pm2 start "$OP_SCRIPT" --name "$PM2_PROCESS_NAME" --interpreter "$VENV_DIR/bin/python3"
-    else
-        echo -e "${RED}无效的跨链方向：$direction，默认使用 ARB -> UNI${NC}"
-        send_telegram_notification "错误：无效的跨链方向，默认使用 ARB -> UNI"
-        pm2 start "$ARB_SCRIPT" --name "$PM2_PROCESS_NAME" --interpreter "$VENV_DIR/bin/python3"
-    fi
+    
+    # 确保脚本存在
+    for script in "$ARB_SCRIPT" "$OP_SCRIPT" "$ARB_OP_SCRIPT" "$BASE_OP_SCRIPT" \
+                 "$UNI_TO_ARB_SCRIPT" "$UNI_TO_OP_SCRIPT" "$UNI_TO_BASE_SCRIPT" \
+                 "$ARB_TO_UNI_SCRIPT" "$ARB_TO_BASE_SCRIPT" \
+                 "$OP_TO_UNI_SCRIPT" "$OP_TO_ARB_SCRIPT" "$OP_TO_BASE_SCRIPT" \
+                 "$BASE_TO_UNI_SCRIPT" "$BASE_TO_ARB_SCRIPT"; do
+        if [ ! -f "$script" ]; then
+            echo -e "${RED}错误：$script 不存在，尝试重新下载${NC}"
+            send_telegram_notification "错误：$script 不存在，尝试重新下载"
+            download_python_scripts
+            break
+        fi
+    done
+    
+    # 根据方向启动对应脚本
+    case "$direction" in
+        "arb_to_uni")
+            echo -e "${GREEN}启动 ARB <-> UNI 跨链脚本...${NC}"
+            pm2 start "$ARB_SCRIPT" --name "$PM2_PROCESS_NAME" --interpreter "$VENV_DIR/bin/python3"
+            ;;
+        "op_to_uni")
+            echo -e "${GREEN}启动 OP <-> UNI 跨链脚本...${NC}"
+            pm2 start "$OP_SCRIPT" --name "$PM2_PROCESS_NAME" --interpreter "$VENV_DIR/bin/python3"
+            ;;
+        "arb_op")
+            echo -e "${GREEN}启动 ARB <-> OP 跨链脚本...${NC}"
+            pm2 start "$ARB_OP_SCRIPT" --name "$PM2_PROCESS_NAME" --interpreter "$VENV_DIR/bin/python3"
+            ;;
+        "base_op")
+            echo -e "${GREEN}启动 BASE <-> OP 跨链脚本...${NC}"
+            pm2 start "$BASE_OP_SCRIPT" --name "$PM2_PROCESS_NAME" --interpreter "$VENV_DIR/bin/python3"
+            ;;
+        "uni_to_arb")
+            echo -e "${GREEN}启动 UNI -> ARB 单向跨链脚本...${NC}"
+            pm2 start "$UNI_TO_ARB_SCRIPT" --name "$PM2_PROCESS_NAME" --interpreter "$VENV_DIR/bin/python3"
+            ;;
+        "uni_to_op")
+            echo -e "${GREEN}启动 UNI -> OP 单向跨链脚本...${NC}"
+            pm2 start "$UNI_TO_OP_SCRIPT" --name "$PM2_PROCESS_NAME" --interpreter "$VENV_DIR/bin/python3"
+            ;;
+        "uni_to_base")
+            echo -e "${GREEN}启动 UNI -> BASE 单向跨链脚本...${NC}"
+            pm2 start "$UNI_TO_BASE_SCRIPT" --name "$PM2_PROCESS_NAME" --interpreter "$VENV_DIR/bin/python3"
+            ;;
+        "op_to_arb")
+            echo -e "${GREEN}启动 OP -> ARB 单向跨链脚本...${NC}"
+            pm2 start "$OP_TO_ARB_SCRIPT" --name "$PM2_PROCESS_NAME" --interpreter "$VENV_DIR/bin/python3"
+            ;;
+        "op_to_base")
+            echo -e "${GREEN}启动 OP -> BASE 单向跨链脚本...${NC}"
+            pm2 start "$OP_TO_BASE_SCRIPT" --name "$PM2_PROCESS_NAME" --interpreter "$VENV_DIR/bin/python3"
+            ;;
+        "base_to_uni")
+            echo -e "${GREEN}启动 BASE -> UNI 单向跨链脚本...${NC}"
+            pm2 start "$BASE_TO_UNI_SCRIPT" --name "$PM2_PROCESS_NAME" --interpreter "$VENV_DIR/bin/python3"
+            ;;
+        "base_to_arb")
+            echo -e "${GREEN}启动 BASE -> ARB 单向跨链脚本...${NC}"
+            pm2 start "$BASE_TO_ARB_SCRIPT" --name "$PM2_PROCESS_NAME" --interpreter "$VENV_DIR/bin/python3"
+            ;;
+        "arb_to_base")
+            echo -e "${GREEN}启动 ARB -> BASE 单向跨链脚本...${NC}"
+            pm2 start "$ARB_TO_BASE_SCRIPT" --name "$PM2_PROCESS_NAME" --interpreter "$VENV_DIR/bin/python3"
+            ;;
+        *)
+            echo -e "${RED}无效的跨链方向：$direction，默认使用 ARB -> UNI${NC}"
+            send_telegram_notification "错误：无效的跨链方向，默认使用 ARB -> UNI"
+            echo "arb_to_uni" > "$DIRECTION_FILE"
+            pm2 start "$ARB_SCRIPT" --name "$PM2_PROCESS_NAME" --interpreter "$VENV_DIR/bin/python3"
+            ;;
+    esac
+    
+    # 启动余额通知脚本
     pm2 start "$BALANCE_SCRIPT" --name "$PM2_BALANCE_NAME" --interpreter "$VENV_DIR/bin/python3"
     pm2 save
+    
     echo -e "${GREEN}脚本已启动！使用 '5. 查看日志' 查看运行状态${NC}"
-    send_telegram_notification "成功启动跨链脚本！"
+    send_telegram_notification "成功启动跨链脚本！方向：$direction"
 }
 
 # === 主菜单 ===

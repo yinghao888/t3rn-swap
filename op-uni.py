@@ -169,7 +169,7 @@ def main():
         logging.error("没有可用账户")
         return
     
-    logging.info(f"开始为 {len(accounts)} 个账户执行 OP-UNI 无限循环跨链，每次 1 ETH")
+    logging.info(f"开始为 {len(accounts)} 个账户执行 OP-UNI 无限循环跨链，每次 0.000001 ETH")
     
     # 检查方向配置
     direction = "op_to_uni"
@@ -185,16 +185,18 @@ def main():
             try:
                 if direction == "op_to_uni":
                     # OP -> UNI
-                    if bridge_op_to_uni(w3_op, account, 1):
-                        # 等待 0.5 秒
-                        logging.info(f"等待 0.5 秒...")
-                        time.sleep(0.5)
+                    if bridge_op_to_uni(w3_op, account, 0.000001):
+                        # 随机等待 5-10 秒
+                        wait_time = random.randint(5, 10)
+                        logging.info(f"等待 {wait_time} 秒...")
+                        time.sleep(wait_time)
                         
                         # UNI -> OP
-                        if bridge_uni_to_op(w3_uni, account, 1):
-                            # 等待 0.5 秒
-                            logging.info(f"等待 0.5 秒...")
-                            time.sleep(0.5)
+                        if bridge_uni_to_op(w3_uni, account, 0.000001):
+                            # 随机等待 5-10 秒
+                            wait_time = random.randint(5, 10)
+                            logging.info(f"等待 {wait_time} 秒...")
+                            time.sleep(wait_time)
                     
             except Exception as e:
                 logging.error(f"账户 {account['name']} 跨链出错: {str(e)}")
