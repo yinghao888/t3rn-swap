@@ -14,13 +14,13 @@ logging.basicConfig(
 )
 
 # === 合约地址和数据模板 ===
-BASE_CONTRACT_ADDRESS = "0xCEE0372632a37Ba4d0499D1E2116eCff3A17d3C3"
+ARB_CONTRACT_ADDRESS = "0x22B65d0B9b59af4D3Ed59F18b9Ad53f5F4908B54"
 
 # === RPC 配置 ===
-BASE_RPC_URLS = [
-    "https://sepolia.base.org",
-    "https://base-sepolia.blockpi.network/v1/rpc/public",
-    "https://base-sepolia.public.blastapi.io"
+ARB_RPC_URLS = [
+    "https://sepolia-arbitrum.publicnode.com",
+    "https://arbitrum-sepolia.blockpi.network/v1/rpc/public",
+    "https://arbitrum-sepolia.public.blastapi.io"
 ]
 
 def test_rpc_connectivity(rpc_urls, network_name):
@@ -41,12 +41,12 @@ def test_rpc_connectivity(rpc_urls, network_name):
 
 def initialize_web3():
     """初始化并返回可用的 Web3 实例"""
-    logging.info("开始检测 Base Sepolia RPC...")
-    base_rpcs = test_rpc_connectivity(BASE_RPC_URLS, "Base Sepolia")
-    if not base_rpcs:
-        raise Exception("没有可用的 Base Sepolia RPC")
+    logging.info("开始检测 Arbitrum Sepolia RPC...")
+    arb_rpcs = test_rpc_connectivity(ARB_RPC_URLS, "Arbitrum Sepolia")
+    if not arb_rpcs:
+        raise Exception("没有可用的 Arbitrum Sepolia RPC")
     
-    return Web3(Web3.HTTPProvider(base_rpcs[0]))
+    return Web3(Web3.HTTPProvider(arb_rpcs[0]))
 
 def load_accounts():
     """加载账户配置"""
@@ -62,54 +62,54 @@ def load_accounts():
 # 定义ACCOUNTS变量，会被bridge-bot.sh脚本自动更新
 ACCOUNTS = []
 
-def create_data_for_base_to_uni(address):
+def create_data_for_arb_to_op(address):
     """根据用户地址创建交易数据"""
     # 去除地址前缀0x
     address_no_prefix = address[2:] if address.startswith("0x") else address
     
     # 构建数据模板 - 在中间部分插入用户地址
-    data = f"0x56591d59756e6974000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000{address_no_prefix}0000000000000000000000000000000000000000000000000de0933e5937a2ab000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000de0b6b3a7640000"
+    data = f"0x56591d596f707374000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000{address_no_prefix}0000000000000000000000000000000000000000000000000de0689a8072b11a000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000de0b6b3a7640000"
     
     return data
 
-def bridge_base_to_uni(w3_base, account, amount_eth=1):
-    """从 Base 跨到 Unichain"""
+def bridge_arb_to_op(w3_arb, account, amount_eth=1):
+    """从 Arbitrum 跨到 Optimism"""
     try:
-        amount_wei = w3_base.to_wei(amount_eth, 'ether')
-        nonce = w3_base.eth.get_transaction_count(account['address'])
+        amount_wei = w3_arb.to_wei(amount_eth, 'ether')
+        nonce = w3_arb.eth.get_transaction_count(account['address'])
         
         # 创建带有用户地址的数据
-        data = create_data_for_base_to_uni(account['address'])
+        data = create_data_for_arb_to_op(account['address'])
         
         tx = {
             'from': account['address'],
-            'to': BASE_CONTRACT_ADDRESS,
+            'to': ARB_CONTRACT_ADDRESS,
             'value': amount_wei,
             'nonce': nonce,
             'gas': 250000,
-            'gasPrice': w3_base.to_wei(0.1, 'gwei'),
-            'chainId': 84532,
+            'gasPrice': w3_arb.to_wei(0.1, 'gwei'),
+            'chainId': 421614,
             'data': data
         }
         
-        signed_tx = w3_base.eth.account.sign_transaction(tx, account['private_key'])
-        tx_hash = w3_base.eth.send_raw_transaction(signed_tx.rawTransaction)
-        logging.info(f"BASE -> UNI 跨链交易已发送，交易哈希: {w3_base.to_hex(tx_hash)}")
+        signed_tx = w3_arb.eth.account.sign_transaction(tx, account['private_key'])
+        tx_hash = w3_arb.eth.send_raw_transaction(signed_tx.rawTransaction)
+        logging.info(f"ARB -> OP 跨链交易已发送，交易哈希: {w3_arb.to_hex(tx_hash)}")
         
-        tx_receipt = w3_base.eth.wait_for_transaction_receipt(tx_hash)
+        tx_receipt = w3_arb.eth.wait_for_transaction_receipt(tx_hash)
         logging.info(f"交易已确认，区块号: {tx_receipt['blockNumber']}")
         return True
         
     except Exception as e:
-        logging.error(f"BASE -> UNI 跨链失败: {str(e)}")
+        logging.error(f"ARB -> OP 跨链失败: {str(e)}")
         return False
 
-def initialize_accounts(w3_base, accounts_config):
+def initialize_accounts(w3_arb, accounts_config):
     """初始化账户"""
     initialized_accounts = []
     for acc in accounts_config:
         try:
-            account = w3_base.eth.account.from_key(acc['private_key'])
+            account = w3_arb.eth.account.from_key(acc['private_key'])
             initialized_accounts.append({
                 'private_key': acc['private_key'],
                 'address': account.address,
@@ -122,7 +122,7 @@ def initialize_accounts(w3_base, accounts_config):
 
 def main():
     # 初始化 Web3 连接
-    w3_base = initialize_web3()
+    w3_arb = initialize_web3()
     
     # 加载并初始化账户
     if ACCOUNTS:
@@ -130,13 +130,13 @@ def main():
     else:
         accounts_config = load_accounts()
     
-    accounts = initialize_accounts(w3_base, accounts_config)
+    accounts = initialize_accounts(w3_arb, accounts_config)
     
     if not accounts:
         logging.error("没有可用账户")
         return
     
-    logging.info(f"开始为 {len(accounts)} 个账户执行 BASE->UNI 单向跨链，每次 5 ETH")
+    logging.info(f"开始为 {len(accounts)} 个账户执行 ARB->OP 单向跨链，每次 5 ETH")
     
     # 循环执行单向跨链
     round_count = 0
@@ -146,8 +146,8 @@ def main():
         
         for account in accounts:
             try:
-                # BASE -> UNI
-                if bridge_base_to_uni(w3_base, account, 5):
+                # ARB -> OP
+                if bridge_arb_to_op(w3_arb, account, 5):
                     # 等待 1-2 秒
                     wait_time = random.uniform(1, 2)
                     logging.info(f"等待 {wait_time:.2f} 秒...")

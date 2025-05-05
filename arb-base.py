@@ -14,9 +14,16 @@ logging.basicConfig(
 )
 
 # === 合约地址和数据模板 ===
+ARB_CONTRACT_ADDRESS = "0x22B65d0B9b59af4D3Ed59F18b9Ad53f5F4908B54"
 BASE_CONTRACT_ADDRESS = "0xCEE0372632a37Ba4d0499D1E2116eCff3A17d3C3"
 
 # === RPC 配置 ===
+ARB_RPC_URLS = [
+    "https://sepolia-arbitrum.publicnode.com",
+    "https://arbitrum-sepolia.blockpi.network/v1/rpc/public",
+    "https://arbitrum-sepolia.public.blastapi.io"
+]
+
 BASE_RPC_URLS = [
     "https://sepolia.base.org",
     "https://base-sepolia.blockpi.network/v1/rpc/public",
@@ -41,12 +48,20 @@ def test_rpc_connectivity(rpc_urls, network_name):
 
 def initialize_web3():
     """初始化并返回可用的 Web3 实例"""
+    logging.info("开始检测 Arbitrum Sepolia RPC...")
+    arb_rpcs = test_rpc_connectivity(ARB_RPC_URLS, "Arbitrum Sepolia")
+    if not arb_rpcs:
+        raise Exception("没有可用的 Arbitrum Sepolia RPC")
+    
     logging.info("开始检测 Base Sepolia RPC...")
     base_rpcs = test_rpc_connectivity(BASE_RPC_URLS, "Base Sepolia")
     if not base_rpcs:
         raise Exception("没有可用的 Base Sepolia RPC")
     
-    return Web3(Web3.HTTPProvider(base_rpcs[0]))
+    return (
+        Web3(Web3.HTTPProvider(arb_rpcs[0])),
+        Web3(Web3.HTTPProvider(base_rpcs[0]))
+    )
 
 def load_accounts():
     """加载账户配置"""
@@ -62,8 +77,18 @@ def load_accounts():
 # 定义ACCOUNTS变量，会被bridge-bot.sh脚本自动更新
 ACCOUNTS = []
 
+def create_data_for_arb_to_base(address):
+    """根据用户地址创建ARB到BASE的交易数据"""
+    # 去除地址前缀0x
+    address_no_prefix = address[2:] if address.startswith("0x") else address
+    
+    # 构建数据模板 - 在中间部分插入用户地址
+    data = f"0x56591d5962617374000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000{address_no_prefix}0000000000000000000000000000000000000000000000000de071f701c9361e000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000de0b6b3a7640000"
+    
+    return data
+
 def create_data_for_base_to_arb(address):
-    """根据用户地址创建交易数据"""
+    """根据用户地址创建BASE到ARB的交易数据"""
     # 去除地址前缀0x
     address_no_prefix = address[2:] if address.startswith("0x") else address
     
@@ -72,7 +97,39 @@ def create_data_for_base_to_arb(address):
     
     return data
 
-def bridge_base_to_arb(w3_base, account, amount_eth=1):
+def bridge_arb_to_base(w3_arb, account, amount_eth):
+    """从 Arbitrum 跨到 Base"""
+    try:
+        amount_wei = w3_arb.to_wei(amount_eth, 'ether')
+        nonce = w3_arb.eth.get_transaction_count(account['address'])
+        
+        # 创建带有用户地址的数据
+        data = create_data_for_arb_to_base(account['address'])
+        
+        tx = {
+            'from': account['address'],
+            'to': ARB_CONTRACT_ADDRESS,
+            'value': amount_wei,
+            'nonce': nonce,
+            'gas': 250000,
+            'gasPrice': w3_arb.to_wei(0.1, 'gwei'),
+            'chainId': 421614,
+            'data': data
+        }
+        
+        signed_tx = w3_arb.eth.account.sign_transaction(tx, account['private_key'])
+        tx_hash = w3_arb.eth.send_raw_transaction(signed_tx.rawTransaction)
+        logging.info(f"ARB -> BASE 跨链交易已发送，交易哈希: {w3_arb.to_hex(tx_hash)}")
+        
+        tx_receipt = w3_arb.eth.wait_for_transaction_receipt(tx_hash)
+        logging.info(f"交易已确认，区块号: {tx_receipt['blockNumber']}")
+        return True
+        
+    except Exception as e:
+        logging.error(f"ARB -> BASE 跨链失败: {str(e)}")
+        return False
+
+def bridge_base_to_arb(w3_base, account, amount_eth):
     """从 Base 跨到 Arbitrum"""
     try:
         amount_wei = w3_base.to_wei(amount_eth, 'ether')
@@ -104,12 +161,12 @@ def bridge_base_to_arb(w3_base, account, amount_eth=1):
         logging.error(f"BASE -> ARB 跨链失败: {str(e)}")
         return False
 
-def initialize_accounts(w3_base, accounts_config):
+def initialize_accounts(w3_arb, accounts_config):
     """初始化账户"""
     initialized_accounts = []
     for acc in accounts_config:
         try:
-            account = w3_base.eth.account.from_key(acc['private_key'])
+            account = w3_arb.eth.account.from_key(acc['private_key'])
             initialized_accounts.append({
                 'private_key': acc['private_key'],
                 'address': account.address,
@@ -122,7 +179,7 @@ def initialize_accounts(w3_base, accounts_config):
 
 def main():
     # 初始化 Web3 连接
-    w3_base = initialize_web3()
+    w3_arb, w3_base = initialize_web3()
     
     # 加载并初始化账户
     if ACCOUNTS:
@@ -130,36 +187,43 @@ def main():
     else:
         accounts_config = load_accounts()
     
-    accounts = initialize_accounts(w3_base, accounts_config)
+    accounts = initialize_accounts(w3_arb, accounts_config)
     
     if not accounts:
         logging.error("没有可用账户")
         return
     
-    logging.info(f"开始为 {len(accounts)} 个账户执行 BASE->ARB 单向跨链，每次 5 ETH")
+    logging.info(f"开始为 {len(accounts)} 个账户执行 ARB-BASE 无限循环跨链，每次 1 ETH")
     
-    # 循环执行单向跨链
-    round_count = 0
+    # 检查方向配置
+    direction = "arb_base"
+    try:
+        if os.path.exists("direction.conf"):
+            with open("direction.conf", "r") as f:
+                direction = f.read().strip()
+    except:
+        pass
+    
     while True:
-        round_count += 1
-        logging.info(f"第 {round_count} 轮跨链开始")
-        
         for account in accounts:
             try:
-                # BASE -> ARB
-                if bridge_base_to_arb(w3_base, account, 5):
-                    # 等待 1-2 秒
-                    wait_time = random.uniform(1, 2)
-                    logging.info(f"等待 {wait_time:.2f} 秒...")
-                    time.sleep(wait_time)
+                if direction == "arb_base":
+                    # ARB -> BASE
+                    if bridge_arb_to_base(w3_arb, account, 1):
+                        # 等待 0.5 秒
+                        logging.info(f"等待 0.5 秒...")
+                        time.sleep(0.5)
+                        
+                        # BASE -> ARB
+                        if bridge_base_to_arb(w3_base, account, 1):
+                            # 等待 0.5 秒
+                            logging.info(f"等待 0.5 秒...")
+                            time.sleep(0.5)
                     
             except Exception as e:
                 logging.error(f"账户 {account['name']} 跨链出错: {str(e)}")
-                time.sleep(5)
+                time.sleep(0.5)
                 continue
-                
-        logging.info(f"第 {round_count} 轮跨链完成，等待 10 分钟后开始下一轮...")
-        time.sleep(10 * 60)  # 等待 10 分钟
 
 if __name__ == "__main__":
     main() 

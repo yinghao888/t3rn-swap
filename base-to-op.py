@@ -62,24 +62,24 @@ def load_accounts():
 # 定义ACCOUNTS变量，会被bridge-bot.sh脚本自动更新
 ACCOUNTS = []
 
-def create_data_for_base_to_uni(address):
+def create_data_for_base_to_op(address):
     """根据用户地址创建交易数据"""
     # 去除地址前缀0x
     address_no_prefix = address[2:] if address.startswith("0x") else address
     
     # 构建数据模板 - 在中间部分插入用户地址
-    data = f"0x56591d59756e6974000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000{address_no_prefix}0000000000000000000000000000000000000000000000000de0933e5937a2ab000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000de0b6b3a7640000"
+    data = f"0x56591d596f707374000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000{address_no_prefix}0000000000000000000000000000000000000000000000000de08a9aa9b8b779000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000de0b6b3a7640000"
     
     return data
 
-def bridge_base_to_uni(w3_base, account, amount_eth=1):
-    """从 Base 跨到 Unichain"""
+def bridge_base_to_op(w3_base, account, amount_eth=1):
+    """从 Base 跨到 Optimism"""
     try:
         amount_wei = w3_base.to_wei(amount_eth, 'ether')
         nonce = w3_base.eth.get_transaction_count(account['address'])
         
         # 创建带有用户地址的数据
-        data = create_data_for_base_to_uni(account['address'])
+        data = create_data_for_base_to_op(account['address'])
         
         tx = {
             'from': account['address'],
@@ -94,14 +94,14 @@ def bridge_base_to_uni(w3_base, account, amount_eth=1):
         
         signed_tx = w3_base.eth.account.sign_transaction(tx, account['private_key'])
         tx_hash = w3_base.eth.send_raw_transaction(signed_tx.rawTransaction)
-        logging.info(f"BASE -> UNI 跨链交易已发送，交易哈希: {w3_base.to_hex(tx_hash)}")
+        logging.info(f"BASE -> OP 跨链交易已发送，交易哈希: {w3_base.to_hex(tx_hash)}")
         
         tx_receipt = w3_base.eth.wait_for_transaction_receipt(tx_hash)
         logging.info(f"交易已确认，区块号: {tx_receipt['blockNumber']}")
         return True
         
     except Exception as e:
-        logging.error(f"BASE -> UNI 跨链失败: {str(e)}")
+        logging.error(f"BASE -> OP 跨链失败: {str(e)}")
         return False
 
 def initialize_accounts(w3_base, accounts_config):
@@ -136,7 +136,7 @@ def main():
         logging.error("没有可用账户")
         return
     
-    logging.info(f"开始为 {len(accounts)} 个账户执行 BASE->UNI 单向跨链，每次 5 ETH")
+    logging.info(f"开始为 {len(accounts)} 个账户执行 BASE->OP 单向跨链，每次 5 ETH")
     
     # 循环执行单向跨链
     round_count = 0
@@ -146,8 +146,8 @@ def main():
         
         for account in accounts:
             try:
-                # BASE -> UNI
-                if bridge_base_to_uni(w3_base, account, 5):
+                # BASE -> OP
+                if bridge_base_to_op(w3_base, account, 5):
                     # 等待 1-2 秒
                     wait_time = random.uniform(1, 2)
                     logging.info(f"等待 {wait_time:.2f} 秒...")
