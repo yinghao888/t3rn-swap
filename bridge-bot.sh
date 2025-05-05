@@ -1,10 +1,5 @@
 #!/bin/bash
 
-# === 激活码系统 ===
-LICENSE_CONFIG="license.conf"
-ACTIVATION_SALT="t3rn-swap-salt-2024"  # 用于生成和验证激活码的盐值
-LICENSE_EXPIRED=false
-
 # === 颜色定义 ===
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -71,166 +66,6 @@ banner() {
     echo "               BASE -> UNI, BASE -> ARB, BASE -> OP"
     echo "=================================================="
     echo -e "${NC}"
-}
-
-# === 生成激活码的函数 ===
-generate_license_code() {
-    local machine_id="$1"
-    local days="$2"
-    local expire_date=$(date -d "+$days days" +%Y%m%d)
-    local license_data="${machine_id}|${expire_date}|${ACTIVATION_SALT}"
-    local license_code=$(echo -n "$license_data" | md5sum | awk '{print $1}')
-    echo "${license_code}|${expire_date}"
-}
-
-# === 验证激活码的函数 ===
-verify_license_code() {
-    local license_code="$1"
-    local machine_id="$2"
-    
-    # 从激活码中提取过期日期和校验码
-    IFS='|' read -r code_part expire_date <<< "$license_code"
-    
-    # 检查是否为通用激活码格式
-    if [[ "$code_part" =~ ^[0-9a-f]{32}$ ]]; then
-        # 标准激活码格式，需要绑定机器ID
-        # 使用相同算法重新计算校验码
-        local license_data="${machine_id}|${expire_date}|${ACTIVATION_SALT}"
-        local calculated_code=$(echo -n "$license_data" | md5sum | awk '{print $1}')
-        
-        # 验证校验码是否匹配
-        if [ "$calculated_code" != "$code_part" ]; then
-            # 检查是否是通用激活码格式
-            if [[ "$license_code" == *"UNIVERSAL-KEY"* ]]; then
-                echo -e "${RED}错误: 您输入了通用激活码的原始数据，而不是实际激活码${NC}"
-                return 3
-            fi
-            return 1  # 校验码不匹配
-        fi
-    else
-        # 尝试作为通用激活码处理
-        echo -e "${RED}无效的激活码格式${NC}"
-        return 1
-    fi
-    
-    # 检查是否过期
-    local current_date=$(date +%Y%m%d)
-    if [ "$current_date" -gt "$expire_date" ]; then
-        export LICENSE_EXPIRED=true
-        return 2  # 已过期
-    fi
-    
-    return 0  # 激活码有效
-}
-
-# === 初始化激活码配置 ===
-init_license() {
-    [ ! -f "$LICENSE_CONFIG" ] && echo '{"license":"none","machine_id":"none"}' > "$LICENSE_CONFIG"
-    
-    # 获取机器唯一标识（使用多种信息组合以提高唯一性）
-    local cpu_info=$(cat /proc/cpuinfo | grep -E "model name|cpu cores|processor" | head -3 | md5sum | awk '{print $1}')
-    local mac_addr=$(cat /sys/class/net/$(ip route show default | awk '/default/ {print $5}')/address 2>/dev/null || echo "00:00:00:00:00:00")
-    local machine_id="${cpu_info}${mac_addr}"
-    local machine_id_hash=$(echo -n "$machine_id" | md5sum | awk '{print $1}')
-    
-    # 更新机器ID
-    local current_config=$(cat "$LICENSE_CONFIG")
-    local updated_config=$(echo "$current_config" | jq --arg mid "$machine_id_hash" '.machine_id = $mid')
-    echo "$updated_config" > "$LICENSE_CONFIG"
-    
-    # 返回机器ID的哈希值
-    echo "$machine_id_hash"
-}
-
-# === 输入和保存激活码 ===
-input_license() {
-    echo -e "${CYAN}请输入激活码:${NC}"
-    read -p "> " license_code
-    
-    local machine_id=$(jq -r '.machine_id' "$LICENSE_CONFIG")
-    verify_license_code "$license_code" "$machine_id"
-    local verify_result=$?
-    
-    if [ $verify_result -eq 0 ]; then
-        # 激活码有效，保存到配置
-        local updated_config=$(jq --arg lic "$license_code" '.license = $lic' "$LICENSE_CONFIG")
-        echo "$updated_config" > "$LICENSE_CONFIG"
-        echo -e "${GREEN}激活成功！${NC}"
-        return 0
-    elif [ $verify_result -eq 2 ]; then
-        echo -e "${RED}激活码已过期！${NC}"
-        return 2
-    else
-        echo -e "${RED}无效的激活码！${NC}"
-        return 1
-    fi
-}
-
-# === 检查激活状态 ===
-check_license() {
-    if [ ! -f "$LICENSE_CONFIG" ]; then
-        echo -e "${RED}未找到激活码配置，请初始化！${NC}"
-        local machine_id=$(init_license)
-        echo -e "${CYAN}您的机器ID是: ${machine_id}${NC}"
-        echo -e "${CYAN}请使用此ID购买激活码${NC}"
-        return 1
-    fi
-    
-    local license_code=$(jq -r '.license' "$LICENSE_CONFIG")
-    local machine_id=$(jq -r '.machine_id' "$LICENSE_CONFIG")
-    
-    if [ "$license_code" = "none" ]; then
-        echo -e "${RED}尚未激活，请输入激活码！${NC}"
-        echo -e "${CYAN}您的机器ID是: ${machine_id}${NC}"
-        echo -e "${CYAN}请使用此ID购买激活码${NC}"
-        return 1
-    fi
-    
-    verify_license_code "$license_code" "$machine_id"
-    local verify_result=$?
-    
-    if [ $verify_result -eq 0 ]; then
-        # 提取过期日期信息并显示
-        IFS='|' read -r code_part expire_date <<< "$license_code"
-        local formatted_expire=$(date -d "${expire_date}" +"%Y年%m月%d日")
-        echo -e "${GREEN}激活状态: 有效${NC}"
-        echo -e "${GREEN}过期时间: ${formatted_expire}${NC}"
-        return 0
-    elif [ $verify_result -eq 2 ]; then
-        echo -e "${RED}激活状态: 已过期${NC}"
-        return 2
-    else
-        echo -e "${RED}激活状态: 无效的激活码${NC}"
-        return 1
-    fi
-}
-
-# === 激活码管理菜单 ===
-license_management() {
-    while true; do
-        banner
-        echo -e "${CYAN}激活码管理:${NC}"
-        echo "1. 查看激活状态"
-        echo "2. 输入新激活码"
-        echo "3. 返回主菜单"
-        read -p "> " choice
-        
-        case $choice in
-            1) 
-                check_license
-                ;;
-            2) 
-                input_license
-                ;;
-            3) 
-                return
-                ;;
-            *) 
-                echo -e "${RED}无效选项！${NC}"
-                ;;
-        esac
-        read -p "按回车继续..."
-    done
 }
 
 # === 检查 root 权限 ===
@@ -1136,36 +971,20 @@ main_menu() {
     while true; do
         banner
         echo -e "${CYAN}请选择操作：${NC}"
-        echo "1. 激活码管理"
-        echo "2. 配置 Telegram"
-        echo "3. 配置私钥"
-        echo "4. 配置跨链方向"
-        echo "5. 启动跨链脚本"
-        echo "6. 查看日志"
-        echo "7. 停止运行"
-        echo "8. 删除脚本"
-        echo "9. 退出"
+        echo "1. 配置 Telegram"
+        echo "2. 配置私钥"
+        echo "3. 配置跨链方向"
+        echo "4. 启动跨链脚本"
+        echo "5. 查看日志"
+        echo "6. 停止运行"
+        echo "7. 删除脚本"
+        echo "8. 退出"
         read -p "> " choice
         case $choice in
-            1) license_management ;;
-            2) 
-                # 检查激活状态
-                check_license
-                if [ $? -ne 0 ]; then
-                    echo -e "${RED}请先激活脚本再使用此功能${NC}"
-                    read -p "按回车继续..."
-                    continue
-                fi
+            1) 
                 manage_telegram 
                 ;;
-            3)
-                # 检查激活状态
-                check_license
-                if [ $? -ne 0 ]; then
-                    echo -e "${RED}请先激活脚本再使用此功能${NC}"
-                    read -p "按回车继续..."
-                    continue
-                fi
+            2)
                 while true; do
                     banner
                     echo -e "${CYAN}私钥管理：${NC}"
@@ -1186,57 +1005,22 @@ main_menu() {
                     read -p "按回车继续..."
                 done
                 ;;
-            4) 
-                # 检查激活状态
-                check_license
-                if [ $? -ne 0 ]; then
-                    echo -e "${RED}请先激活脚本再使用此功能${NC}"
-                    read -p "按回车继续..."
-                    continue
-                fi
+            3) 
                 select_direction 
                 ;;
-            5) 
-                # 检查激活状态
-                check_license
-                if [ $? -ne 0 ]; then
-                    echo -e "${RED}请先激活脚本再使用此功能${NC}"
-                    read -p "按回车继续..."
-                    continue
-                fi
+            4) 
                 start_bridge 
                 ;;
-            6) 
-                # 检查激活状态
-                check_license
-                if [ $? -ne 0 ]; then
-                    echo -e "${RED}请先激活脚本再使用此功能${NC}"
-                    read -p "按回车继续..."
-                    continue
-                fi
+            5) 
                 view_logs 
                 ;;
-            7) 
-                # 检查激活状态
-                check_license
-                if [ $? -ne 0 ]; then
-                    echo -e "${RED}请先激活脚本再使用此功能${NC}"
-                    read -p "按回车继续..."
-                    continue
-                fi
+            6) 
                 stop_running 
                 ;;
-            8) 
-                # 检查激活状态
-                check_license
-                if [ $? -ne 0 ]; then
-                    echo -e "${RED}请先激活脚本再使用此功能${NC}"
-                    read -p "按回车继续..."
-                    continue
-                fi
+            7) 
                 delete_script 
                 ;;
-            9) echo -e "${GREEN}退出！${NC}"; send_telegram_notification "脚本已退出"; exit 0 ;;
+            8) echo -e "${GREEN}退出！${NC}"; send_telegram_notification "脚本已退出"; exit 0 ;;
             *) echo -e "${RED}无效选项！${NC}"; send_telegram_notification "错误：无效主菜单选项" ;;
         esac
         read -p "按回车继续..."
@@ -1248,14 +1032,4 @@ check_root
 install_dependencies
 download_python_scripts
 init_config
-# 初始化和检查激活码
-init_license
-check_license
-if [ $? -ne 0 ] && [ "$LICENSE_EXPIRED" = false ]; then
-    echo -e "${CYAN}是否现在输入激活码? (y/n)${NC}"
-    read -p "> " answer
-    if [ "$answer" = "y" ] || [ "$answer" = "Y" ]; then
-        input_license
-    fi
-fi
 main_menu
